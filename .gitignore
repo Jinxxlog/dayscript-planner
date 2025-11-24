@@ -1,25 +1,26 @@
-# Flutter/Dart
+# Flutter & Dart
 .dart_tool/
 .packages
 .pub-cache/
 build/
+pubspec.lock
 
-# Platform builds
-android/
-ios/
-linux/
-macos/
-windows/
-web/
-
-# Firebase keys
+# Firebase sensitive configs
+lib/firebase_options.dart
 android/app/google-services.json
 ios/Runner/GoogleService-Info.plist
+macos/Runner/GoogleService-Info.plist
 
-# IDE
+# Generated plugin registrants
+**/generated_plugin_registrant.*
+**/ephemeral/
+
+# IDE settings
 .vscode/
 .idea/
 
-# Generated
-**/generated_plugin_registrant.*
-**/ephemeral/
+# Test artifacts
+coverage/
+
+# Logs
+*.log
