@@ -4,6 +4,7 @@
 .pub-cache/
 build/
 pubspec.lock
+firebase.json
 
 # Firebase sensitive configs
 lib/firebase_options.dart
