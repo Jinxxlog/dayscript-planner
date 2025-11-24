@@ -1,0 +1,25 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+.pub-cache/
+build/
+
+# Platform builds
+android/
+ios/
+linux/
+macos/
+windows/
+web/
+
+# Firebase keys
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+
+# IDE
+.vscode/
+.idea/
+
+# Generated
+**/generated_plugin_registrant.*
+**/ephemeral/

@@ -1,0 +1,110 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:window_size/window_size.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'themes/app_themes.dart';
+import 'pages/planner_home.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    setWindowTitle('My Planner');
+    setWindowMinSize(const Size(800, 600));
+    setWindowMaxSize(Size.infinite);
+
+    final prefs = await SharedPreferences.getInstance();
+
+    // 🔹 저장된 크기 불러오기
+    final left = prefs.getDouble("window_left");
+    final top = prefs.getDouble("window_top");
+    final width = prefs.getDouble("window_width");
+    final height = prefs.getDouble("window_height");
+
+    if (left != null && top != null && width != null && height != null) {
+      setWindowFrame(Rect.fromLTWH(left, top, width, height));
+    } else {
+      // 🔹 기본값 (모니터 해상도의 50%)
+      final screen = await getCurrentScreen();
+      if (screen != null) {
+        final frame = screen.frame;
+        final w = frame.width * 0.5;
+        final h = frame.height * 0.5;
+        final l = frame.left + (frame.width - w) / 2;
+        final t = frame.top + (frame.height - h) / 2;
+        setWindowFrame(Rect.fromLTWH(l, t, w, h));
+      }
+    }
+  }
+
+  runApp(const MyPlannerApp());
+}
+
+class MyPlannerApp extends StatefulWidget {
+  const MyPlannerApp({super.key});
+
+  @override
+  State<MyPlannerApp> createState() => _MyPlannerAppState();
+}
+
+class _MyPlannerAppState extends State<MyPlannerApp> with WidgetsBindingObserver {
+  String _currentThemeKey = "light";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+    WidgetsBinding.instance.addObserver(this); // 🔹 앱 라이프사이클 감시 시작
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // 🔹 앱 상태 변경 감시
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached || state == AppLifecycleState.inactive) {
+      _saveWindowSize(); // 앱 종료/비활성화 시 저장
+    }
+  }
+
+  Future<void> _saveWindowSize() async {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      final info = await getWindowInfo();
+      if (info.frame != null) {
+        final prefs = await SharedPreferences.getInstance();
+        prefs.setDouble("window_left", info.frame!.left);
+        prefs.setDouble("window_top", info.frame!.top);
+        prefs.setDouble("window_width", info.frame!.width);
+        prefs.setDouble("window_height", info.frame!.height);
+      }
+    }
+  }
+
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _currentThemeKey = prefs.getString("themeKey") ?? "light";
+    });
+  }
+
+  Future<void> _changeTheme(String themeKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString("themeKey", themeKey);
+    setState(() {
+      _currentThemeKey = themeKey;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'My Planner',
+      theme: appThemes[_currentThemeKey],
+      home: PlannerHomePage(onThemeChange: _changeTheme),
+    );
+  }
+}
