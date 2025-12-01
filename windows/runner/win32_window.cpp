@@ -171,19 +171,19 @@ LRESULT Win32Window::MessageHandler(HWND hwnd,
   // ⭐ Click-through for background
   // ------------------------------------------
   if (message == WM_NCHITTEST) {
-    LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
-    if (hit == HTCLIENT) return HTCLIENT;       // Flutter area = clickable
-    return HTTRANSPARENT;                       // Background = pass-through
+      LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
+
+      // Allow resizing on borders
+      if (hit == HTLEFT || hit == HTRIGHT ||
+          hit == HTTOP || hit == HTBOTTOM ||
+          hit == HTTOPLEFT || hit == HTTOPRIGHT ||
+          hit == HTBOTTOMLEFT || hit == HTBOTTOMRIGHT) {
+          return hit; // ✅ keep resize behavior
+      }
+
+      return HTCLIENT;  // ✅ Flutter area = normal hit
   }
 
-  // ------------------------------------------
-  // ⭐ Flutter → Windows background opacity control
-  // ------------------------------------------
-  if (message == WM_USER + 200) {
-    BYTE alpha = (BYTE)wparam;
-    SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
-    return 0;
-  }
 
   switch (message) {
     case WM_DESTROY:

@@ -15,6 +15,7 @@ import '../services/overlay_control_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'dart:convert';
+import '../widgets/ui/macos_panel_style.dart';
 
 // ✅ 키보드 단축키용 Intent 정의
 class PrevMonthIntent extends Intent {
@@ -40,19 +41,21 @@ class PlannerHomePage extends StatefulWidget {
 class _PlannerHomePageState extends State<PlannerHomePage> {
   final _todoService = TodoService();
 
+  bool _todoCollapsed = false; // 투두 접힘 여부
+  bool _memoCollapsed = false; // 메모 접힘 여부
+
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
   DateTime _currentDate = DateTime.now();
   Timer? _midnightTimer;
   bool _isGoingBack = false;
 
-  bool _isLoading = true; // ✅ 로딩 상태 추가
+  bool _isLoading = true; // ✅ 로딩 상태
   List<Todo> _todos = [];
 
   // ✅ 오버레이 관련 상태
   bool _isOverlay = false;   // 오버레이 모드 상태
   double _opacityValue = 1.0; // 투명도 슬라이더 값
-
 
   @override
   void initState() {
@@ -65,9 +68,15 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
       await Future.delayed(const Duration(milliseconds: 200));
       await _loadTodosByDate(DateTime.now());
       if (kDebugMode) {
-      print("✅ 초기 로드 완료 (오늘 투두 표시)");
+        print("✅ 초기 로드 완료 (오늘 투두 표시)");
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _midnightTimer?.cancel();
+    super.dispose();
   }
 
   // ─────────────────────────────────────────────
@@ -116,7 +125,8 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
         await _todoService.syncTodayFromDialog();
         await _loadTodosByDate(now);
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('last_date', "${now.year}-${now.month}-${now.day}");
+        await prefs.setString(
+            'last_date', "${now.year}-${now.month}-${now.day}");
       }
     });
   }
@@ -156,7 +166,6 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
     });
   }
 
-
   // ✅ 완료 상태 토글 (체크 반영 즉시 저장)
   Future<void> _toggleComplete(Todo todo, bool value) async {
     final updatedList = List<Todo>.from(_todos);
@@ -168,7 +177,7 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
       // ✅ 날짜별 상태 즉시 저장
       await _todoService.saveDailyState(_selectedDay, updatedList);
       if (kDebugMode) {
-      print("☑️ ${todo.title} → ${value ? '완료' : '미완료'} 저장됨");
+        print("☑️ ${todo.title} → ${value ? '완료' : '미완료'} 저장됨");
       }
     }
   }
@@ -184,8 +193,8 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
     // ✅ 날짜별 순서 반영 저장
     await _todoService.saveDailyState(_selectedDay, _todos);
     if (kDebugMode) {
-    print("🔄 ${_selectedDay.toIso8601String()} 투두 순서 변경 및 저장됨");
-  }
+      print("🔄 ${_selectedDay.toIso8601String()} 투두 순서 변경 및 저장됨");
+    }
   }
 
   // ✅ 시간순 정렬
@@ -194,19 +203,23 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
       // 1) 시간이 있는 경우
       if (t.dueTime != null) {
         final hour = t.dueTime!.hour;
-        if (hour < 8) return 1;     // 아침
-        if (hour < 12) return 2;    // 점심
-        if (hour < 18) return 3;    // 저녁
-        return 4;                   // 아무때나
+        if (hour < 8) return 1; // 아침
+        if (hour < 12) return 2; // 점심
+        if (hour < 18) return 3; // 저녁
+        return 4; // 아무때나
       }
 
       // 2) 텍스트 기반
       final txt = (t.textTime ?? "").trim();
       switch (txt) {
-        case "아침": return 1;
-        case "점심": return 2;
-        case "저녁": return 3;
-        case "아무때나": return 4;
+        case "아침":
+          return 1;
+        case "점심":
+          return 2;
+        case "저녁":
+          return 3;
+        case "아무때나":
+          return 4;
       }
 
       return 5; // 분류 불가 → 제일 뒤
@@ -249,137 +262,144 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
     }
   }
 
+  // ─────────────────────────────────────────────
+  // ✅ UI 구성
+  // ─────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
-// ─────────────────────────────────────────────
-// ✅ UI 구성
-// ─────────────────────────────────────────────
-@override
-Widget build(BuildContext context) {
-  final theme = Theme.of(context);
-  final isDark = theme.brightness == Brightness.dark;
+    return Scaffold(
+      extendBodyBehindAppBar: false,
 
-  return Scaffold(
-    extendBodyBehindAppBar: false,
-
-    // 🔹 배경 투명도(오버레이)
-    backgroundColor: _isOverlay
-        ? (isDark ? Colors.black.withOpacity(0.85) : Colors.white.withOpacity(0.9))
-        : theme.scaffoldBackgroundColor,
-
-    // ❌ Drawer 제거 — 독립창 방식에서는 필요 없음
-    // drawer: ...
-
-    appBar: AppBar(
-      leading: IconButton(
-        icon: const Icon(Icons.account_circle, size: 26),
-        tooltip: "프로필 / 설정",
-        onPressed: () async {
-          // 👉 새 설정창 띄우기 (desktop_multi_window)
-        final window = await DesktopMultiWindow.createWindow(
-          jsonEncode({
-            'page': 'settings',
-          }),
-        );
-
-          window
-            ..setFrame(const Offset(100, 100) & const Size(600, 700))
-            ..setTitle("Settings - DayScript")
-            ..show();
-
-          debugPrint("🪟 설정 창 생성 완료!");
-        },
-      ),
-
-      title: const Text("DayScript"),
+      // 🔹 배경 투명도(오버레이)
       backgroundColor: _isOverlay
-          ? (isDark ? Colors.black.withOpacity(0.6) : Colors.white.withOpacity(0.7))
-          : theme.appBarTheme.backgroundColor,
-      elevation: _isOverlay ? 0 : 2,
+          ? (isDark
+              ? Colors.black.withOpacity(0.85)
+              : Colors.white.withOpacity(0.9))
+          : theme.scaffoldBackgroundColor,
 
-      actions: [
-        // 🔹 투명도 슬라이더
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.opacity_rounded, size: 20, color: Colors.blueAccent),
-              SizedBox(
-                width: 100,
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: Colors.blueAccent,
-                    inactiveTrackColor: Colors.blueAccent.withOpacity(0.2),
-                    thumbColor: Colors.blueAccent,
-                    trackHeight: 3,
-                  ),
-                  child: Slider(
-                    value: _opacityValue,
-                    min: 0.3,
-                    max: 1.0,
-                    divisions: 7,
-                    label: "${(_opacityValue * 100).toInt()}%",
-                    onChanged: (v) {
-                      setState(() => _opacityValue = v);
-                      WidgetsBinding.instance.addPostFrameCallback((_) async {
-                        await OverlayControlService.setBackgroundOpacity(v);
-                      });
-                    },
-                  ),
-                ),
-              ),
-              Text(
-                "${(_opacityValue * 100).toInt()}%",
-                style: const TextStyle(fontSize: 13, color: Colors.blueAccent),
-              ),
-            ],
-          ),
-        ),
-
-        // 🔹 오버레이 모드 버튼
-        IconButton(
-          tooltip: _isOverlay ? "일반 모드로 복귀" : "오버레이 모드 전환",
-          icon: Icon(
-            _isOverlay ? Icons.desktop_windows : Icons.layers,
-            color: _isOverlay ? Colors.greenAccent : Colors.blueAccent,
-          ),
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.account_circle, size: 26),
+          tooltip: "프로필 / 설정",
           onPressed: () async {
-            setState(() => _isOverlay = !_isOverlay);
-            if (_isOverlay) {
-              await OverlayControlService.enterOverlayMode();
-            } else {
-              await OverlayControlService.exitOverlayMode();
-            }
+            // 👉 새 설정창 띄우기 (desktop_multi_window)
+            final window = await DesktopMultiWindow.createWindow(
+              jsonEncode({
+                'page': 'settings',
+              }),
+            );
+
+            window
+              ..setFrame(const Offset(100, 100) & const Size(600, 700))
+              ..setTitle("Settings - DayScript")
+              ..show();
+
+            debugPrint("🪟 설정 창 생성 완료!");
           },
         ),
-      ],
-    ),
+        title: const Text("DayScript"),
+        backgroundColor: _isOverlay
+            ? (isDark
+                ? Colors.black.withOpacity(0.6)
+                : Colors.white.withOpacity(0.7))
+            : theme.appBarTheme.backgroundColor,
+        elevation: _isOverlay ? 0 : 2,
+        actions: [
+          // 🔹 투명도 슬라이더
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.opacity_rounded,
+                    size: 20, color: Colors.blueAccent),
+                SizedBox(
+                  width: 100,
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      activeTrackColor: Colors.blueAccent,
+                      inactiveTrackColor:
+                          Colors.blueAccent.withOpacity(0.2),
+                      thumbColor: Colors.blueAccent,
+                      trackHeight: 3,
+                    ),
+                    child: Slider(
+                      value: _opacityValue,
+                      min: 0.3,
+                      max: 1.0,
+                      divisions: 7,
+                      label: "${(_opacityValue * 100).toInt()}%",
+                      onChanged: (v) {
+                        setState(() => _opacityValue = v);
+                        WidgetsBinding.instance.addPostFrameCallback((_) async {
+                          await OverlayControlService.setBackgroundOpacity(v);
+                        });
+                      },
+                    ),
+                  ),
+                ),
+                Text(
+                  "${(_opacityValue * 100).toInt()}%",
+                  style: const TextStyle(
+                      fontSize: 13, color: Colors.blueAccent),
+                ),
+              ],
+            ),
+          ),
 
-    // 🧩 메인 내용부
-    body: SafeArea(
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        margin: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: _isOverlay
-              ? (isDark
-                  ? Colors.black.withOpacity(0.3)
-                  : Colors.white.withOpacity(0.4))
-              : theme.scaffoldBackgroundColor,
-          borderRadius: BorderRadius.circular(16),
-          border: _isOverlay
-              ? Border.all(color: Colors.white.withOpacity(0.25), width: 1)
-              : null,
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: _buildMainBody(),
+          // 🔹 오버레이 모드 버튼
+          IconButton(
+            tooltip: _isOverlay ? "일반 모드로 복귀" : "오버레이 모드 전환",
+            icon: Icon(
+              _isOverlay ? Icons.desktop_windows : Icons.layers,
+              color: _isOverlay ? Colors.greenAccent : Colors.blueAccent,
+            ),
+            onPressed: () async {
+              setState(() => _isOverlay = !_isOverlay);
+              if (_isOverlay) {
+                await OverlayControlService.enterOverlayMode();
+              } else {
+                await OverlayControlService.exitOverlayMode();
+              }
+            },
+          ),
+        ],
+      ),
+
+      // 🧩 메인 내용부
+      body: SafeArea(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          margin: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: _isOverlay
+                ? (isDark
+                    ? Colors.black.withOpacity(0.3)
+                    : Colors.white.withOpacity(0.4))
+                : theme.scaffoldBackgroundColor,
+            borderRadius: BorderRadius.circular(16),
+            border: _isOverlay
+                ? Border.all(color: Colors.white.withOpacity(0.25), width: 1)
+                : null,
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: _buildMainBody(),
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
+  // ─────────────────────────────────────────────
+  // ✅ 레이아웃 상태 헬퍼
+  bool get _showCalendarFull => _todoCollapsed && _memoCollapsed;
+  bool get _showTodoOnly => !_todoCollapsed && _memoCollapsed;
+  bool get _showMemoOnly => _todoCollapsed && !_memoCollapsed;
+  bool get _showBoth => !_todoCollapsed && !_memoCollapsed;
 
   // ─────────────────────────────────────────────
   Widget _buildMainBody() {
@@ -387,8 +407,9 @@ Widget build(BuildContext context) {
       padding: const EdgeInsets.only(left: 20.0),
       child: Row(
         children: [
+          // 📅 캘린더 영역
           Expanded(
-            flex: 5,
+          flex: _showCalendarFull ? 10 : 7,
             child: Column(
               children: [
                 _buildCalendarHeader(),
@@ -411,105 +432,269 @@ Widget build(BuildContext context) {
             ),
           ),
           const SizedBox(width: 20),
+
+          // 📐 오른쪽 패널 / 사이드 레일
+          if (_showCalendarFull)
+            _buildCollapsedSideRail()
+          else
+            Expanded(
+              flex: _showCalendarFull ? 0 : 3,
+              child: _buildRightPanel(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // ✅ 오른쪽 패널 (투두 + 메모)
+  Widget _buildRightPanel() {
+    if (_showBoth) {
+      // 둘 다 펼쳐진 기본 상태
+      return Column(
+        children: [
           Expanded(
-            flex: 2,
-            child: Column(
+            flex: 5,
+            child: _buildTodoPanel(showBody: true),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            flex: 5,
+            child: _buildMemoPanel(showBody: true),
+          ),
+        ],
+      );
+    } else if (_showTodoOnly) {
+      // 메모만 접힘 → 투두가 오른쪽 전체, 메모 헤더는 아래
+      return Column(
+        children: [
+          Expanded(
+            flex: 10,
+            child: _buildTodoPanel(showBody: true),
+          ),
+          const SizedBox(height: 4),
+          _buildMemoPanel(showBody: false), // 헤더만
+        ],
+      );
+    } else if (_showMemoOnly) {
+      // 투두만 접힘 → 투두 헤더만 위, 메모가 오른쪽 전체
+      return Column(
+        children: [
+          _buildTodoPanel(showBody: false), // 헤더만
+          const SizedBox(height: 4),
+          Expanded(
+            flex: 10,
+            child: _buildMemoPanel(showBody: true),
+          ),
+        ],
+      );
+    }
+
+    // 이 경우는 _showCalendarFull에서 이미 처리됨
+    return const SizedBox.shrink();
+  }
+
+  // ─────────────────────────────────────────────
+  // ✅ 둘 다 접혔을 때: 오른쪽 얇은 세로 레일
+  Widget _buildCollapsedSideRail() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final baseColor =
+        isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.05);
+
+    Widget buildRailButton({
+      required String label,
+      required VoidCallback onTap,
+      IconData icon = Icons.view_list,
+    }) {
+      return GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 32,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: baseColor,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: RotatedBox(
+            quarterTurns: 3,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildTodoPanel(),
-                const Divider(height: 1),
-                const Expanded(flex: 1, child: MemoPad()),
+                Icon(icon, size: 14, color: Colors.blueAccent),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
               ],
             ),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      width: 40,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          buildRailButton(
+            label: "To-do",
+            icon: Icons.checklist,
+            onTap: () {
+              setState(() {
+                _todoCollapsed = false;
+              });
+            },
+          ),
+          buildRailButton(
+            label: "Memo",
+            icon: Icons.notes,
+            onTap: () {
+              setState(() {
+                _memoCollapsed = false;
+              });
+            },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTodoPanel() {
-    return Expanded(
-      flex: 1,
-      child: Container(
-        padding: const EdgeInsets.only(top: 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      const Text(
-                        "To-do list",
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+  // ─────────────────────────────────────────────
+  // ✅ 투두 패널 (헤더 + 본문)
+  Widget _buildTodoPanel({required bool showBody}) {
+    return Container(
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 헤더
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      "To-do list",
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      "- ${_selectedDay.month}월 ${_selectedDay.day}일"
+                      "${DateUtils.isSameDay(_selectedDay, DateTime.now()) ? " (오늘)" : ""}",
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: DateUtils.isSameDay(
+                                _selectedDay, DateTime.now())
+                            ? Colors.blueAccent
+                            : Colors.grey[600],
+                        fontWeight: FontWeight.w500,
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        "- ${_selectedDay.month}월 ${_selectedDay.day}일"
-                        "${DateUtils.isSameDay(_selectedDay, DateTime.now()) ? " (오늘)" : ""}",
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: DateUtils.isSameDay(_selectedDay, DateTime.now())
-                              ? Colors.blueAccent
-                              : Colors.grey[600],
-                          fontWeight: FontWeight.w500,
-                        ),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        _todoCollapsed
+                            ? Icons.keyboard_arrow_down
+                            : Icons.keyboard_arrow_up,
+                        color: Colors.blueAccent,
                       ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      TextButton.icon(
-                        onPressed: _sortTodosByTime,
-                        icon: const Icon(FeatherIcons.clock, size: 18),
-                        label: const Text("시간 순 정렬"),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.calendar_view_week,
-                            color: Colors.blueAccent),
-                        tooltip: "투두리스트 관리",
-                        onPressed: () async {
-                          await showDialog(
-                            context: context,
-                            builder: (context) => WeeklyTodoDialog(
-                              onChanged: () async {
-                                await _todoService.syncAllFromDialog();
-                                await _loadTodosByDate(_selectedDay);
-                              },
-                            ),
-                          );
-                          await Future.delayed(
-                              const Duration(milliseconds: 150));
-                          await _loadTodosByDate(_selectedDay);
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                      onPressed: () {
+                        setState(() => _todoCollapsed = !_todoCollapsed);
+                      },
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    TextButton.icon(
+                      onPressed: _sortTodosByTime,
+                      icon: const Icon(FeatherIcons.clock, size: 18),
+                      label: const Text("시간 순 정렬"),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.calendar_view_week,
+                          color: Colors.blueAccent),
+                      tooltip: "투두리스트 관리",
+                      onPressed: () async {
+                        await showDialog(
+                          context: context,
+                          builder: (context) => WeeklyTodoDialog(
+                            onChanged: () async {
+                              await _todoService.syncAllFromDialog();
+                              await _loadTodosByDate(_selectedDay);
+                            },
+                          ),
+                        );
+                        await Future.delayed(
+                            const Duration(milliseconds: 150));
+                        await _loadTodosByDate(_selectedDay);
+                      },
+                    ),
+                  ],
+                ),
+              ],
             ),
+          ),
+
+          // 본문
+          if (showBody && !_todoCollapsed) ...[
+            const SizedBox(height: 4),
             Expanded(child: _buildTodoList()),
           ],
-        ),
+        ],
       ),
     );
   }
 
   // ─────────────────────────────────────────────
-  // ✅ 달력 이동 기능 (이 부분 추가!)
+Widget _buildMemoPanel({required bool showBody}) {
+  return AnimatedContainer(
+    duration: const Duration(milliseconds: 240),
+    decoration: macWidgetDecoration(context),
+    child: Column(
+      children: [
+        buildMacHeader(
+          title: "Memo Pad",
+          collapsed: _memoCollapsed,
+          onToggle: () => setState(() => _memoCollapsed = !_memoCollapsed),
+        ),
+
+        if (showBody && !_memoCollapsed)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: MemoPad(),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+
+  // ─────────────────────────────────────────────
+  // ✅ 달력 이동 기능
   void _goPrevMonth() {
     setState(() {
       _isGoingBack = true;
-      _focusedDay = DateTime(_focusedDay.year, _focusedDay.month - 1, _focusedDay.day);
+      _focusedDay =
+          DateTime(_focusedDay.year, _focusedDay.month - 1, _focusedDay.day);
     });
   }
 
   void _goNextMonth() {
     setState(() {
       _isGoingBack = false;
-      _focusedDay = DateTime(_focusedDay.year, _focusedDay.month + 1, _focusedDay.day);
+      _focusedDay =
+          DateTime(_focusedDay.year, _focusedDay.month + 1, _focusedDay.day);
     });
   }
 
@@ -549,7 +734,7 @@ Widget build(BuildContext context) {
               initialDate: _focusedDay,
               firstDate: DateTime(2000),
               lastDate: DateTime(2100),
-              initialDatePickerMode: DatePickerMode.year, // ✅ 연도부터 선택 가능
+              initialDatePickerMode: DatePickerMode.year, // ✅ 연도부터 선택
             );
 
             if (picked != null) {
@@ -563,14 +748,15 @@ Widget build(BuildContext context) {
             transitionBuilder: (child, animation) =>
                 FadeTransition(opacity: animation, child: child),
             child: MouseRegion(
-              cursor: SystemMouseCursors.click, // ✅ 마우스 오버 시 손가락 커서
+              cursor: SystemMouseCursors.click,
               child: Text(
                 "${_focusedDay.year}. ${_focusedDay.month.toString().padLeft(2, '0')}.",
-                key: ValueKey("${_focusedDay.year}-${_focusedDay.month}"),
+                key:
+                    ValueKey("${_focusedDay.year}-${_focusedDay.month}"),
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: Colors.blueAccent, // 🔹 클릭 가능한 느낌 강조
+                  color: Colors.blueAccent,
                 ),
               ),
             ),
@@ -585,7 +771,6 @@ Widget build(BuildContext context) {
       ],
     );
   }
-
 
   // ─────────────────────────────────────────────
   // ✅ 투두 리스트 + 로딩 애니메이션
@@ -603,12 +788,13 @@ Widget build(BuildContext context) {
                   ),
                   todos: _todos,
                   onTodosChanged: (updatedTodos) async {
-                    // ✅ 기존: updateOrder() → 전역 Hive 덮어쓰기
-                    // 🚀 수정: 날짜별 dailyBox에 저장
-                    setState(() => _todos = List<Todo>.from(updatedTodos));
-                    await _todoService.saveDailyState(_selectedDay, updatedTodos);
+                    setState(
+                        () => _todos = List<Todo>.from(updatedTodos));
+                    await _todoService.saveDailyState(
+                        _selectedDay, updatedTodos);
                     if (kDebugMode) {
-                    print("💾 ${_selectedDay.toIso8601String()} 순서 변경 저장됨");
+                      print(
+                          "💾 ${_selectedDay.toIso8601String()} 순서 변경 저장됨");
                     }
                   },
                 )
@@ -616,50 +802,52 @@ Widget build(BuildContext context) {
                   key: ValueKey("empty"),
                   child: Text(
                     "오늘의 할 일이 없습니다 😊",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w500),
                   ),
                 ),
     );
   }
 }
 
-
 // ─────────────────────────────────────────────
 // ✨ 로딩 텍스트 애니메이션 위젯
-  class LoadingText extends StatefulWidget {
-    const LoadingText({super.key});
+class LoadingText extends StatefulWidget {
+  const LoadingText({super.key});
 
-    @override
-    State<LoadingText> createState() => _LoadingTextState();
+  @override
+  State<LoadingText> createState() => _LoadingTextState();
+}
+
+class _LoadingTextState extends State<LoadingText>
+    with SingleTickerProviderStateMixin {
+  int _dotCount = 1;
+  late final Timer _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      setState(() => _dotCount = _dotCount % 3 + 1);
+    });
   }
 
-  class _LoadingTextState extends State<LoadingText> with SingleTickerProviderStateMixin {
-    int _dotCount = 1;
-    late final Timer _timer;
-
-    @override
-    void initState() {
-      super.initState();
-      _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-        setState(() => _dotCount = _dotCount % 3 + 1);
-      });
-    }
-
-    @override
-    void dispose() {
-      _timer.cancel();
-      super.dispose();
-    }
-
-    @override
-    Widget build(BuildContext context) {
-      return AnimatedOpacity(
-        duration: const Duration(milliseconds: 400),
-        opacity: 1.0,
-        child: Text(
-          '오늘 하루를 준비하는 중${'.' * _dotCount}',
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-        ),
-      );
-    }
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 400),
+      opacity: 1.0,
+      child: Text(
+        '오늘 하루를 준비하는 중${'.' * _dotCount}',
+        style: const TextStyle(
+            fontSize: 16, fontWeight: FontWeight.w500),
+      ),
+    );
+  }
+}

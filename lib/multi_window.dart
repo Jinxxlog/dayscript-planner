@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'services/startup_service.dart';   // ← 이거 반드시 추가
 
 class MultiWindowApp extends StatelessWidget {
   final Map<String, dynamic> args;
@@ -143,7 +144,7 @@ class SettingsHomePage extends StatelessWidget {
           // --------------------
           // 투두 게이미피케이션
           // --------------------
-          const SectionTitle("투두 게이미피케이션"),
+          const SectionTitle("추가 기능"),
           _SettingsTile(
             title: "주간 퀘스트 설정",
             subtitle: "1주일 목표 설정",
@@ -174,24 +175,35 @@ class SettingsHomePage extends StatelessWidget {
           // --------------------
           const SectionTitle("고급"),
           _SettingsTile(
-            title: "단축키 설정",
-            subtitle: "키보드 단축키 커스터마이즈",
+            title: "시작프로그램 등록",
+            subtitle: "시작프로그램에 캘린더 등록하기",
             icon: Icons.keyboard,
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const ShortcutSettingPage()),
+                MaterialPageRoute(builder: (_) => const StartUpProgram()),
+              );
+            },
+          ),
+          _SettingsTile(
+            title: "릴리즈 노트",
+            subtitle: "업데이트 기록 보기",
+            icon: Icons.info_outline,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AppInfoPage()),
               );
             },
           ),
           _SettingsTile(
             title: "앱 정보",
             subtitle: "버전 / 라이선스",
-            icon: Icons.info_outline,
+            icon: Icons.update,
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const AppInfoPage()),
+                MaterialPageRoute(builder: (_) => const ReleaseNotesPage()),
               );
             },
           ),
@@ -303,19 +315,6 @@ class PremiumPage extends StatelessWidget {
   }
 }
 
-class ShortcutSettingPage extends StatelessWidget {
-  const ShortcutSettingPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("단축키 설정")),
-      body: const Center(
-        child: Text("단축키 설정 기능 준비 중입니다!"),
-      ),
-    );
-  }
-}
 
 class AppInfoPage extends StatelessWidget {
   const AppInfoPage({super.key});
@@ -325,7 +324,128 @@ class AppInfoPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text("앱 정보")),
       body: const Center(
-        child: Text("DayScript v1.0.0\nStudio ReadMe 제작"),
+        child: Text("DayScript beta 1.0.2\nStudio ReadMe 제작"),
+      ),
+    );
+  }
+}
+
+class StartUpProgram extends StatefulWidget {
+  const StartUpProgram({super.key});
+
+  @override
+  State<StartUpProgram> createState() => _StartUpProgramState();
+}
+
+class _StartUpProgramState extends State<StartUpProgram> {
+  bool _enabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    StartupService.isStartupEnabled().then((v) {
+      setState(() => _enabled = v);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("시작프로그램 등록")),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Windows 시작 시 자동 실행", style: TextStyle(fontSize: 16)),
+              Switch(
+                value: _enabled,
+                onChanged: (v) async {
+                  await StartupService.setStartupEnabled(v);
+                  setState(() => _enabled = v);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class ReleaseNotesPage extends StatelessWidget {
+  const ReleaseNotesPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Map<String, String>> dummyNotes = [
+      {
+        "version": "Beta 1.00",
+        "date": "2025-01-22",
+        "details":
+            "- 기본 캘린더 구조 완성\n"
+            "- 투두 리스트 & 메모패드 동작 안정화\n"
+            "- 다크모드 / 라이트모드 지원\n"
+            "- 멀티윈도우 설정창 프로토타입"
+      },
+      {
+        "version": "Alpha",
+        "date": "2025-01-10",
+        "details":
+            "- 프로젝트 초기 설계 및 UI 베이스 구축\n"
+            "- 테스트용 내부 개발 버전"
+      },
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("릴리즈 노트"),
+      ),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: dummyNotes.length,
+        itemBuilder: (context, index) {
+          final note = dummyNotes[index];
+          return Container(
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  note["version"]!,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  note["date"]!,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  note["details"]!,
+                  style: const TextStyle(fontSize: 14, height: 1.4),
+                )
+              ],
+            ),
+          );
+        },
       ),
     );
   }

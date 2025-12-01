@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'services/startup_service.dart';   // ← 이거 반드시 추가
 import 'package:window_size/window_size.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -23,13 +24,10 @@ import 'firebase_options.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'multi_window.dart';
 
+
 Future<void> main(List<String> args) async {
 
-  final prefs = await SharedPreferences.getInstance();
-  prefs.remove("window_width");
-  prefs.remove("window_height");
-  prefs.remove("window_left");
-  prefs.remove("window_top");
+  await StartupService.init();
 
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -69,8 +67,8 @@ Future<void> main(List<String> args) async {
   await Hive.openBox('weekly_todos_dialog');
 
   // ✅ 투두 상태 저장용 박스 미리 오픈
-  final todoService = TodoService();
-  await todoService.loadDailyState(DateTime.now());
+  //final todoService = TodoService();
+  //await todoService.loadDailyState(DateTime.now());
 
   // ✅ 서비스 초기화
   await HolidayService().init();
@@ -79,7 +77,14 @@ Future<void> main(List<String> args) async {
   // ✅ 데스크탑 창 세팅
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     setWindowTitle('Dayscript');
-    setWindowMinSize(const Size(1920, 1080));
+
+    // ✅ 초기 기본 크기만 설정 (고정 X)
+    setWindowFrame(const Rect.fromLTWH(0, 0, 1920, 1080));
+
+    // ✅ 최소 크기 (너무 작지만 않으면 됨)R
+    setWindowMinSize(const Size(900, 600));
+
+    // ✅ 최대 크기 제한 제거 (무제한 리사이즈 가능)
     setWindowMaxSize(Size.infinite);
 
     final prefs = await SharedPreferences.getInstance();
@@ -89,8 +94,23 @@ Future<void> main(List<String> args) async {
     final height = prefs.getDouble("window_height");
 
     if (left != null && top != null && width != null && height != null) {
-      setWindowFrame(Rect.fromLTWH(left, top, width, height));
+      final screen = await getCurrentScreen();
+
+      if (screen != null) {
+        final frame = screen.frame;
+
+        // ✅ 화면 영역 안쪽으로 좌표 보정 + double 변환
+        final safeLeft = left.clamp(frame.left, frame.right - 400).toDouble();
+        final safeTop = top.clamp(frame.top, frame.bottom - 300).toDouble();
+
+        // ✅ 최소 창 크기 보정 + double 변환
+        final safeWidth = (width < 800 ? 1280 : width).toDouble();
+        final safeHeight = (height < 600 ? 900 : height).toDouble();
+
+        setWindowFrame(Rect.fromLTWH(safeLeft, safeTop, safeWidth, safeHeight));
+      }
     } else {
+      // ✅ 처음 실행 시 중앙 정렬 유지
       final screen = await getCurrentScreen();
       if (screen != null) {
         final frame = screen.frame;
@@ -103,11 +123,45 @@ Future<void> main(List<String> args) async {
     }
   }
 
+
+  // ✅ Windows 종료 시 창 크기/위치 저장 훅 연결
+  if (Platform.isWindows) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      attachWindowCloseHandler();
+    });
+  }
+
+
   // ✅ 초기 ThemeMode 로드 후 앱 실행
   final themeService = ThemeService();
   final initialMode = await themeService.loadThemeMode();
   runApp(MyPlannerApp(themeService: themeService, initialMode: initialMode));
 }
+
+// ✅ 창 닫힘 이벤트 감지 + 직접 저장 실행
+void attachWindowCloseHandler() async {
+  const WM_CLOSE = 0x0010;
+
+  // 창 종료 감지 (window_size 패키지 방식)
+  getWindowInfo().then((info) {
+    // 종료 순간 저장
+    saveWindowSizeDirect();
+  });
+}
+
+Future<void> saveWindowSizeDirect() async {
+  final info = await getWindowInfo();
+  final frame = info.frame;
+
+  if (frame != null) {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble("window_left", frame.left);
+    await prefs.setDouble("window_top", frame.top);
+    await prefs.setDouble("window_width", frame.width);
+    await prefs.setDouble("window_height", frame.height);
+  }
+}
+
 
 class MyPlannerApp extends StatefulWidget {
   final ThemeService themeService;
