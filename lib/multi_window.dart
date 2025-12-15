@@ -1,28 +1,75 @@
 import 'package:flutter/material.dart';
 import 'services/startup_service.dart';   // ← 이거 반드시 추가
+import 'services/theme_service.dart';
+import 'theme/themes.dart';
+import 'dart:io' show Platform;
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 
-class MultiWindowApp extends StatelessWidget {
+class MultiWindowApp extends StatefulWidget {
   final Map<String, dynamic> args;
 
   const MultiWindowApp({super.key, required this.args});
 
   @override
+  State<MultiWindowApp> createState() => _MultiWindowAppState();
+}
+
+class _MultiWindowAppState extends State<MultiWindowApp> {
+  final _themeService = ThemeService();
+  ThemeMode _themeMode = ThemeMode.system;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final mode = await _themeService.loadThemeMode();
+    if (mounted) {
+      setState(() {
+        _themeMode = mode;
+        _ready = true;
+      });
+    }
+  }
+
+  Future<void> _updateTheme(ThemeMode mode) async {
+    setState(() => _themeMode = mode);
+    await _themeService.saveThemeMode(mode);
+    // 메인 창에 테마 변경 알림 (윈도우 ID 0 가정)
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      try {
+        await DesktopMultiWindow.invokeMethod(
+            0, 'themeChanged', _modeToString(mode));
+      } catch (_) {}
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final type = args['page'] ?? 'settings';
+    final type = widget.args['page'] ?? 'settings';
+
+    if (!_ready) {
+      return const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: Colors.grey.shade200,
-        appBarTheme: AppBarTheme(
-          backgroundColor: Colors.grey.shade100,
-          elevation: 0,
-          foregroundColor: Colors.black87,
-        ),
-      ),
+      theme: buildLightTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: _themeMode,
       home: type == 'settings'
-          ? const SettingsHomePage()
+          ? SettingsHomePage(
+              currentMode: _themeMode,
+              onThemeChange: _updateTheme,
+            )
           : Scaffold(
               body: Center(child: Text("Unknown window: $type")),
             ),
@@ -34,11 +81,21 @@ class MultiWindowApp extends StatelessWidget {
 //   ⚙️ 설정창 메인 페이지
 // ------------------------------------------------------------
 class SettingsHomePage extends StatelessWidget {
-  const SettingsHomePage({super.key});
+  final ThemeMode currentMode;
+  final ValueChanged<ThemeMode> onThemeChange;
+
+  const SettingsHomePage({
+    super.key,
+    required this.currentMode,
+    required this.onThemeChange,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isLoggedIn = false; // TODO: Firebase Auth 연동 예정
+
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
       appBar: AppBar(
@@ -69,18 +126,23 @@ class SettingsHomePage extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: theme.colorScheme.surface,
                 borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                    color: theme.colorScheme.outlineVariant.withOpacity(0.3)),
               ),
               child: Row(
                 children: [
                   CircleAvatar(
                     radius: 28,
-                    backgroundColor: Colors.grey.shade300,
+                    backgroundColor:
+                        isDark ? Colors.grey.shade700 : Colors.grey.shade300,
                     backgroundImage:
                         isLoggedIn ? NetworkImage("https://picsum.photos/200") : null,
                     child: !isLoggedIn
-                        ? const Icon(Icons.person, size: 32, color: Colors.white)
+                        ? Icon(Icons.person,
+                            size: 32,
+                            color: isDark ? Colors.black : Colors.white)
                         : null,
                   ),
                   const SizedBox(width: 14),
@@ -90,14 +152,17 @@ class SettingsHomePage extends StatelessWidget {
                     children: [
                       Text(
                         isLoggedIn ? "김진형" : "로그인하세요",
-                        style: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.onSurface,
+                        ),
                       ),
                       Text(
                         isLoggedIn ? "jinhyeong@example.com" : "계정 설정을 위해 로그인",
                         style: TextStyle(
                           fontSize: 14,
-                          color: Colors.grey.shade600,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       )
                     ],
@@ -115,9 +180,9 @@ class SettingsHomePage extends StatelessWidget {
           const SectionTitle("디스플레이"),
           _SettingsTile(
             title: "테마 변경",
-            subtitle: "라이트 / 다크",
+            subtitle: _modeLabel(currentMode),
             icon: Icons.dark_mode,
-            onTap: () {},
+            onTap: () => _showThemeDialog(context, currentMode, onThemeChange),
           ),
           _SettingsTile(
             title: "글씨체 변경",
@@ -213,6 +278,82 @@ class SettingsHomePage extends StatelessWidget {
   }
 }
 
+String _modeLabel(ThemeMode mode) {
+  switch (mode) {
+    case ThemeMode.light:
+      return "라이트";
+    case ThemeMode.dark:
+      return "다크";
+    default:
+      return "시스템";
+  }
+}
+
+Future<void> _showThemeDialog(
+    BuildContext context,
+    ThemeMode currentMode,
+    ValueChanged<ThemeMode> onThemeChange) async {
+  ThemeMode selected = currentMode;
+
+  await showDialog<void>(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text("테마 선택"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<ThemeMode>(
+                title: const Text("시스템 기본"),
+                value: ThemeMode.system,
+                groupValue: selected,
+                onChanged: (v) => setState(() => selected = v!),
+              ),
+              RadioListTile<ThemeMode>(
+                title: const Text("라이트"),
+                value: ThemeMode.light,
+                groupValue: selected,
+                onChanged: (v) => setState(() => selected = v!),
+              ),
+              RadioListTile<ThemeMode>(
+                title: const Text("다크"),
+                value: ThemeMode.dark,
+                groupValue: selected,
+                onChanged: (v) => setState(() => selected = v!),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("취소"),
+            ),
+            FilledButton(
+              onPressed: () {
+                onThemeChange(selected);
+                Navigator.pop(context);
+              },
+              child: const Text("적용"),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+String _modeToString(ThemeMode mode) {
+  switch (mode) {
+    case ThemeMode.light:
+      return 'light';
+    case ThemeMode.dark:
+      return 'dark';
+    default:
+      return 'system';
+  }
+}
+
 // ------------------------------------------------------------
 // 섹션 타이틀
 // ------------------------------------------------------------
@@ -222,13 +363,15 @@ class SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 8),
       child: Text(
         text,
         style: TextStyle(
           fontSize: 14,
-          color: Colors.grey.shade700,
+          color: color,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -255,11 +398,28 @@ class _SettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final cardColor =
+        isDark ? theme.colorScheme.surfaceVariant : Colors.white;
+    final iconBg =
+        isDark ? Colors.white.withOpacity(0.08) : Colors.grey.shade200;
+    final iconColor = isDark
+        ? Colors.white.withOpacity(0.9)
+        : Colors.black87;
+    final textColor = theme.colorScheme.onSurface;
+    final subColor = theme.colorScheme.onSurfaceVariant;
+    final chevronColor =
+        isDark ? Colors.white70 : Colors.grey.shade600;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardColor,
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withOpacity(0.25),
+        ),
       ),
       child: ListTile(
         shape: RoundedRectangleBorder(
@@ -267,16 +427,19 @@ class _SettingsTile extends StatelessWidget {
         ),
         leading: Container(
           decoration: BoxDecoration(
-            color: Colors.grey.shade200,
+            color: iconBg,
             borderRadius: BorderRadius.circular(10),
           ),
           width: 40,
           height: 40,
-          child: Icon(icon, color: Colors.black87),
+          child: Icon(icon, color: iconColor),
         ),
-        title: Text(title, style: const TextStyle(fontSize: 16)),
-        subtitle: subtitle != null ? Text(subtitle!) : null,
-        trailing: const Icon(Icons.chevron_right),
+        title: Text(title,
+            style: TextStyle(fontSize: 16, color: textColor)),
+        subtitle: subtitle != null
+            ? Text(subtitle!, style: TextStyle(color: subColor))
+            : null,
+        trailing: Icon(Icons.chevron_right, color: chevronColor),
         onTap: onTap,
       ),
     );

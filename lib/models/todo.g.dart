@@ -22,13 +22,16 @@ class TodoAdapter extends TypeAdapter<Todo> {
       isDone: fields[2] as bool,
       dueTime: fields[3] as DateTime?,
       textTime: fields[4] as String?,
+      color: fields[5] as String?,
+      updatedAt: fields[6] as DateTime?,
+      deleted: fields[7] as bool? ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, Todo obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -38,7 +41,13 @@ class TodoAdapter extends TypeAdapter<Todo> {
       ..writeByte(3)
       ..write(obj.dueTime)
       ..writeByte(4)
-      ..write(obj.textTime);
+      ..write(obj.textTime)
+      ..writeByte(5)
+      ..write(obj.color)
+      ..writeByte(6)
+      ..write(obj.updatedAt)
+      ..writeByte(7)
+      ..write(obj.deleted);
   }
 
   @override

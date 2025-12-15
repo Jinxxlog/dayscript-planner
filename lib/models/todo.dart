@@ -19,9 +19,14 @@ class Todo extends HiveObject {
   @HiveField(4)
   String? textTime;
 
-  // 🟩 추가: 색상 HEX 값 저장용
   @HiveField(5)
   String? color;
+
+  @HiveField(6)
+  DateTime? updatedAt;
+
+  @HiveField(7)
+  bool deleted;
 
   Todo(
     this.id,
@@ -29,8 +34,10 @@ class Todo extends HiveObject {
     this.isDone = false,
     this.dueTime,
     this.textTime,
-    this.color, // ✅ 생성자에도 추가
-  });
+    this.color,
+    DateTime? updatedAt,
+    this.deleted = false,
+  }) : updatedAt = updatedAt ?? DateTime.now();
 
   // ✅ JSON 직렬화
   Map<String, dynamic> toJson() => {
@@ -39,18 +46,29 @@ class Todo extends HiveObject {
         'isDone': isDone,
         'dueTime': dueTime?.toIso8601String(),
         'textTime': textTime,
-        'color': color, // ✅ 추가
+        'color': color,
+        'updatedAt': updatedAt?.toIso8601String(),
+        'deleted': deleted,
       };
 
   // ✅ JSON 역직렬화
   factory Todo.fromJson(Map<String, dynamic> json) {
+    DateTime? _parseDT(dynamic v) {
+      if (v == null) return null;
+      if (v is DateTime) return v;
+      if (v is String) return DateTime.tryParse(v);
+      return null;
+    }
+
     return Todo(
       json['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
       json['title']?.toString() ?? '',
       isDone: json['isDone'] ?? false,
-      dueTime: json['dueTime'] != null ? DateTime.tryParse(json['dueTime']) : null,
+      dueTime: _parseDT(json['dueTime']),
       textTime: json['textTime']?.toString(),
-      color: json['color']?.toString(), // ✅ 추가
+      color: json['color']?.toString(),
+      updatedAt: _parseDT(json['updatedAt']) ?? DateTime.now(),
+      deleted: json['deleted'] == true,
     );
   }
 
@@ -61,7 +79,9 @@ class Todo extends HiveObject {
         isDone: isDone,
         dueTime: dueTime,
         textTime: textTime,
-        color: color, // ✅ 추가
+        color: color,
+        updatedAt: updatedAt,
+        deleted: deleted,
       );
 
   @override

@@ -2,7 +2,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/material.dart';
 import '../models/recurring_event.dart';
 
-/// ✅ 반복 일정 관리 서비스 (v2)
+/// 반복 일정 관리 (v2)
 class RecurringService {
   static const String boxName = 'recurring_events';
   static final RecurringService _instance = RecurringService._internal();
@@ -11,7 +11,7 @@ class RecurringService {
 
   Box<RecurringEvent>? _box;
 
-  /// ✅ 초기화 (앱 시작 시 한 번만 호출)
+  /// Hive 초기화
   Future<void> init() async {
     await Hive.initFlutter();
 
@@ -24,40 +24,36 @@ class RecurringService {
 
   Box<RecurringEvent> get _ensureBox {
     if (_box == null) {
-      throw Exception("❌ RecurringService not initialized. Call init() first.");
+      throw Exception("RecurringService not initialized. Call init() first.");
     }
     return _box!;
   }
 
-  // ───────────────────────────────
-  // 🔹 CRUD: 기본 기능
-  // ───────────────────────────────
+  // =============================================================================
+  // CRUD
+  // =============================================================================
 
-  /// ✅ 모든 반복 일정 불러오기
+  /// 모든 반복 일정 조회 (deleted 제외)
   List<RecurringEvent> getEvents() {
     final box = _ensureBox;
-    return box.values.toList();
+    return box.values.where((e) => e.deleted != true).toList();
   }
 
-  /// ✅ 반복 일정 추가 (중복 검사 개선)
+  /// 반복 일정 추가/업서트
   Future<void> addEvent(RecurringEvent event) async {
     final box = _ensureBox;
 
-    // 중복 기준:
-    // - 같은 title
-    // - 같은 cycleType & yearMonth & yearDay & isLunar
-    // - 같은 rule (기존 RRULE 기반 데이터 호환)
     final existingKey = box.keys.firstWhere(
       (key) {
         final e = box.get(key);
         if (e == null) return false;
 
-        // RRULE 기반 이벤트일 경우
+        // RRULE 기반 동일성 체크
         if (event.rule != null && event.rule!.isNotEmpty) {
           return e.title == event.title && e.rule == event.rule;
         }
 
-        // 연간 반복 (양력/음력) 기반 이벤트일 경우
+        // 연간 반복 비교 (양/음력)
         if (event.cycleType == RecurringCycleType.yearly) {
           return e.title == event.title &&
               e.cycleType == event.cycleType &&
@@ -66,43 +62,60 @@ class RecurringService {
               e.isLunar == event.isLunar;
         }
 
-        // 기본 fallback
         return false;
       },
       orElse: () => null,
     );
 
+    final payload = event.copyWith(
+      updatedAt: DateTime.now(),
+      deleted: false,
+    );
+
     if (existingKey != null) {
-      await box.put(existingKey, event);
+      await box.put(existingKey, payload);
     } else {
-      await box.add(event);
+      await box.add(payload);
     }
   }
 
-  /// ✅ 인덱스로 삭제
+  /// 인덱스로 제거 (소프트 삭제)
   Future<void> removeEvent(int index) async {
     final box = _ensureBox;
     if (index >= 0 && index < box.length) {
-      await box.deleteAt(index);
+      final current = box.getAt(index);
+      if (current != null) {
+        await box.putAt(
+          index,
+          current.copyWith(
+            deleted: true,
+            updatedAt: DateTime.now(),
+          ),
+        );
+      } else {
+        await box.deleteAt(index);
+      }
     }
   }
 
-  /// ✅ 제목으로 삭제 (RRULE 기반용)
+  /// 제목으로 제거 (소프트 삭제)
   Future<void> removeEventByTitle(String title) async {
     final box = _ensureBox;
-    final keysToDelete = <dynamic>[];
     for (var key in box.keys) {
       final e = box.get(key);
       if (e != null && e.title == title) {
-        keysToDelete.add(key);
+        await box.put(
+          key,
+          e.copyWith(
+            deleted: true,
+            updatedAt: DateTime.now(),
+          ),
+        );
       }
-    }
-    for (var key in keysToDelete) {
-      await box.delete(key);
     }
   }
 
-  /// ✅ 특정 날짜 기반 삭제 (연간 일정 등)
+  /// 월/일/음력 조건으로 제거 (소프트 삭제)
   Future<void> removeEventByDate({
     required String title,
     required int month,
@@ -110,33 +123,32 @@ class RecurringService {
     bool isLunar = false,
   }) async {
     final box = _ensureBox;
-    final keysToDelete = <dynamic>[];
 
     for (var key in box.keys) {
       final e = box.get(key);
       if (e == null) continue;
 
-      final sameDate = (e.yearMonth == month &&
-          e.yearDay == day &&
-          e.isLunar == isLunar);
+      final sameDate =
+          (e.yearMonth == month && e.yearDay == day && e.isLunar == isLunar);
 
       if (e.title == title && sameDate) {
-        keysToDelete.add(key);
+        await box.put(
+          key,
+          e.copyWith(
+            deleted: true,
+            updatedAt: DateTime.now(),
+          ),
+        );
       }
-    }
-
-    for (var key in keysToDelete) {
-      await box.delete(key);
     }
   }
 
-  /// ✅ 모든 반복 일정 초기화
   Future<void> clearAll() async {
     final box = _ensureBox;
     await box.clear();
   }
 
-  /// ✅ 현재 달/연도의 반복 일정 가져오기
+  /// 특정 날짜에 매칭되는 반복 일정 반환 (deleted 제외)
   List<RecurringEvent> getEventsForDate(DateTime date) {
     final events = getEvents();
     final List<RecurringEvent> result = [];
@@ -144,7 +156,6 @@ class RecurringService {
     for (final e in events) {
       switch (e.cycleType) {
         case RecurringCycleType.weekly:
-          // 🟩 주간: 요일 비교
           if (e.rule?.contains("BYDAY") == true) {
             final code = _weekdayToCode(date.weekday);
             if (e.rule!.contains(code)) {
@@ -156,7 +167,6 @@ class RecurringService {
           break;
 
         case RecurringCycleType.monthly:
-          // 🟩 월간: 일(day) 비교
           if (e.rule?.contains("BYMONTHDAY") == true) {
             final m = RegExp(r'BYMONTHDAY=(\d+)').firstMatch(e.rule!);
             if (m != null && int.parse(m.group(1)!) == date.day) {
@@ -168,7 +178,6 @@ class RecurringService {
           break;
 
         case RecurringCycleType.yearly:
-          // 🟩 연간: 월+일 모두 비교
           if (e.rule?.contains("BYMONTH") == true &&
               e.rule?.contains("BYMONTHDAY") == true) {
             final m1 = RegExp(r'BYMONTH=(\d+)').firstMatch(e.rule!);
@@ -194,15 +203,14 @@ class RecurringService {
     return result;
   }
 
-  /// 🧭 요일 숫자 → RRULE 코드 변환
   String _weekdayToCode(int weekday) {
     const codes = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
     return codes[weekday - 1];
   }
 
-  // ───────────────────────────────
-  // 🆕 반복 일정 간편 추가 (멀티 요일/날짜 대응)
-  // ───────────────────────────────
+  // =============================================================================
+  // 편의: rule 구성
+  // =============================================================================
   Future<void> addEventWithInfo({
     required String title,
     required RecurringCycleType cycleType,
@@ -212,34 +220,25 @@ class RecurringService {
     bool isLunar = false,
     Color? color,
     String? note,
-
-    // ✅ 새로 추가된 필드
-    List<int>? byDays,        // 주간 반복용: [1,3,5] → 월/수/금
-    List<int>? byMonthDays,   // 월간 반복용: [1,15,28]
+    List<int>? byDays, // weekly: [1,3,5] 등
+    List<int>? byMonthDays, // monthly: [1,15,28] 등
   }) async {
-    print("🧩 [addEventWithInfo] type=$cycleType month=$month day=$day lunar=$isLunar");
+    print("recurring addEventWithInfo type=$cycleType month=$month day=$day lunar=$isLunar");
 
     if (title.trim().isEmpty) {
-      throw Exception("일정 이름을 입력해주세요.");
+      throw Exception("제목이 비어 있습니다.");
     }
 
     String rule = "FREQ=${cycleType.toString().split('.').last.toUpperCase()}";
     RecurringEvent e;
 
     switch (cycleType) {
-      // ───────────────────────────────
-      // 🗓 월간 반복
-      // ───────────────────────────────
       case RecurringCycleType.monthly:
-        if (byMonthDays != null && byMonthDays.isNotEmpty) {
-          // ✅ 여러 날짜 지원
-          final daysJoined = byMonthDays.join(',');
-          rule += ";BYMONTHDAY=$daysJoined";
-        } else {
-          final validDay = day ?? DateTime.now().day;
-          rule += ";BYMONTHDAY=$validDay";
-          byMonthDays = [validDay];
-        }
+        final effectiveDays = (byMonthDays != null && byMonthDays.isNotEmpty)
+            ? byMonthDays
+            : <int>[day ?? DateTime.now().day];
+        final daysJoined = effectiveDays.join(',');
+        rule += ";BYMONTHDAY=$daysJoined";
 
         e = RecurringEvent(
           title: title,
@@ -247,19 +246,16 @@ class RecurringService {
           startDate: DateTime(
             DateTime.now().year,
             DateTime.now().month,
-            byMonthDays!.first,
+            effectiveDays.first,
           ),
           color: color ?? Colors.blueAccent,
           cycleType: RecurringCycleType.monthly,
-          yearDay: byMonthDays.first,
+          yearDay: effectiveDays.first,
           note: note,
         );
         await addEvent(e);
         break;
 
-      // ───────────────────────────────
-      // 📅 연간 반복
-      // ───────────────────────────────
       case RecurringCycleType.yearly:
         final validMonth = month ?? DateTime.now().month;
         final validDay2 = day ?? 1;
@@ -279,17 +275,13 @@ class RecurringService {
         await addEvent(e);
         break;
 
-      // ───────────────────────────────
-      // 🧭 주간 반복
-      // ───────────────────────────────
       case RecurringCycleType.weekly:
         if (byDays != null && byDays.isNotEmpty) {
-          // ✅ 여러 요일 → MO,WE,FR 형태로 변환
           final weekdayCodes = byDays.map(_weekdayToCode).join(',');
           rule += ";BYDAY=$weekdayCodes";
         } else {
-          // fallback: 단일 요일
-          final weekdayCode = _weekdayToCode(startDate?.weekday ?? DateTime.now().weekday);
+          final weekdayCode =
+              _weekdayToCode(startDate?.weekday ?? DateTime.now().weekday);
           rule += ";BYDAY=$weekdayCode";
         }
 
@@ -305,23 +297,13 @@ class RecurringService {
         break;
 
       default:
-        throw Exception("지원하지 않는 반복 유형입니다.");
+        throw Exception("지원하지 않는 반복 타입입니다.");
     }
   }
 
+} // end RecurringService
 
-String _getTodayCode() {
-  const codes = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
-  final weekday = DateTime.now().weekday; // 1=월 ~ 7=일
-  return codes[weekday - 1];
-}
-
-
-} // 👈 RecurringService 클래스 닫힘은 여기!
-
-
-
-/// ✅ Hive 어댑터 등록 (v2 확장 반영)
+/// Hive 어댑터 (v2)
 class RecurringEventAdapter extends TypeAdapter<RecurringEvent> {
   @override
   final int typeId = 7;
@@ -339,6 +321,8 @@ class RecurringEventAdapter extends TypeAdapter<RecurringEvent> {
     bool isLunar = false;
     String? id;
     String? note;
+    DateTime? updatedAt;
+    bool deleted = false;
 
     try {
       cycleType = RecurringCycleType.values[reader.readInt()];
@@ -347,11 +331,16 @@ class RecurringEventAdapter extends TypeAdapter<RecurringEvent> {
       isLunar = reader.readBool();
       id = reader.read() as String?;
       note = reader.read() as String?;
-    } catch (_) {}
+      final updatedRaw = reader.read() as String?;
+      updatedAt = DateTime.tryParse(updatedRaw ?? '');
+      deleted = reader.readBool();
+    } catch (_) {
+      updatedAt = updatedAt ?? DateTime.now();
+    }
 
     return RecurringEvent(
       title: title,
-      rule: rule,
+      rule: rule.isEmpty ? null : rule,
       startDate: startDate,
       color: Color(colorValue),
       cycleType: cycleType,
@@ -360,6 +349,8 @@ class RecurringEventAdapter extends TypeAdapter<RecurringEvent> {
       isLunar: isLunar,
       id: (id?.isEmpty ?? true) ? null : id,
       note: (note?.isEmpty ?? true) ? null : note,
+      updatedAt: updatedAt ?? DateTime.now(),
+      deleted: deleted,
     );
   }
 
@@ -370,15 +361,13 @@ class RecurringEventAdapter extends TypeAdapter<RecurringEvent> {
     writer.writeString(obj.startDate.toIso8601String());
     writer.writeInt(obj.color.value);
 
-    // 🔹 enum null 방지
-    final safeCycle = obj.cycleType ?? RecurringCycleType.none;
-    writer.writeInt(safeCycle.index);
-
-    // 🔹 primitive null 방지 (Hive는 null write 불가)
+    writer.writeInt(obj.cycleType.index);
     writer.write(obj.yearMonth ?? 0);
     writer.write(obj.yearDay ?? 0);
     writer.writeBool(obj.isLunar);
     writer.write(obj.id ?? '');
     writer.write(obj.note ?? '');
+    writer.write(obj.updatedAt.toIso8601String());
+    writer.writeBool(obj.deleted);
   }
 }

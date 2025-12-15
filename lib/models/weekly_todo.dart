@@ -23,10 +23,16 @@ class WeeklyTodo extends HiveObject {
   DateTime? endTime;
 
   @HiveField(6)
-  String? textTime; // ✅ (아침/점심/저녁/사용자 입력 등)
+  String? textTime; // 예: 09:00/오전/커스텀 텍스트
 
   @HiveField(7)
-  String? color; // ✅ HEX 문자열 (예: '#2196F3')
+  String? color; // HEX 코드 (기본: '#2196F3')
+
+  @HiveField(8)
+  DateTime? updatedAt;
+
+  @HiveField(9)
+  bool deleted;
 
   WeeklyTodo({
     required this.id,
@@ -36,10 +42,12 @@ class WeeklyTodo extends HiveObject {
     this.startTime,
     this.endTime,
     this.textTime,
-    this.color = '#2196F3', // 기본값: 파란색
-  });
+    this.color = '#2196F3',
+    DateTime? updatedAt,
+    this.deleted = false,
+  }) : updatedAt = updatedAt ?? DateTime.now();
 
-  /// ✅ 깊은 복사
+  /// 얕은 복사
   WeeklyTodo copy() {
     return WeeklyTodo(
       id: id,
@@ -54,10 +62,11 @@ class WeeklyTodo extends HiveObject {
           : null,
       textTime: (textTime ?? '').trim().isEmpty ? null : textTime!.trim(),
       color: color,
+      updatedAt: updatedAt,
+      deleted: deleted,
     );
   }
 
-  /// ✅ JSON 직렬화
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
@@ -67,12 +76,14 @@ class WeeklyTodo extends HiveObject {
         'endTime': endTime?.toIso8601String(),
         'textTime': textTime,
         'color': color,
+        'updatedAt': updatedAt?.toIso8601String(),
+        'deleted': deleted,
       };
 
-  /// ✅ JSON 역직렬화
   factory WeeklyTodo.fromJson(Map<String, dynamic> json) {
     DateTime? _parseDT(dynamic v) {
       if (v == null) return null;
+      if (v is DateTime) return v;
       if (v is String) return DateTime.tryParse(v);
       if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
       return null;
@@ -95,11 +106,12 @@ class WeeklyTodo extends HiveObject {
       endTime: _parseDT(json['endTime']),
       textTime: (json['textTime'] as String?)?.trim(),
       color: _validateColor(json['color']),
+      updatedAt: _parseDT(json['updatedAt']) ?? DateTime.now(),
+      deleted: json['deleted'] == true,
     );
   }
 
-  /// ✅ 안전한 컬러 문자열 보정
-    static String _validateColor(dynamic v) {
+  static String _validateColor(dynamic v) {
     if (v == null || v.toString().toLowerCase() == 'null') return '#2196F3';
     final s = v.toString().trim();
     if (s.isEmpty) return '#2196F3';

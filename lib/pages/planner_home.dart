@@ -1,6 +1,7 @@
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'dart:async';
 import 'dart:ui'; // 🔹 Blur 효과를 위한 ImageFilter
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,6 +57,8 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
   // ✅ 오버레이 관련 상태
   bool _isOverlay = false;   // 오버레이 모드 상태
   double _opacityValue = 1.0; // 투명도 슬라이더 값
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
@@ -285,6 +288,15 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
           icon: const Icon(Icons.account_circle, size: 26),
           tooltip: "프로필 / 설정",
           onPressed: () async {
+            if (!_isDesktop) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("데스크톱 전용 기능입니다."),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              return;
+            }
             // 👉 새 설정창 띄우기 (desktop_multi_window)
             final window = await DesktopMultiWindow.createWindow(
               jsonEncode({
@@ -319,30 +331,34 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
                 SizedBox(
                   width: 100,
                   child: SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      activeTrackColor: Colors.blueAccent,
-                      inactiveTrackColor:
-                          Colors.blueAccent.withOpacity(0.2),
-                      thumbColor: Colors.blueAccent,
-                      trackHeight: 3,
-                    ),
-                    child: Slider(
-                      value: _opacityValue,
-                      min: 0.3,
-                      max: 1.0,
-                      divisions: 7,
-                      label: "${(_opacityValue * 100).toInt()}%",
-                      onChanged: (v) {
-                        setState(() => _opacityValue = v);
-                        WidgetsBinding.instance.addPostFrameCallback((_) async {
-                          await OverlayControlService.setBackgroundOpacity(v);
-                        });
-                      },
-                    ),
+                  data: SliderTheme.of(context).copyWith(
+                    activeTrackColor: Colors.blueAccent,
+                    inactiveTrackColor:
+                        Colors.blueAccent.withOpacity(0.2),
+                    thumbColor: Colors.blueAccent,
+                    trackHeight: 3,
+                  ),
+                  child: Slider(
+                    value: _opacityValue,
+                    min: 0.3,
+                    max: 1.0,
+                    divisions: 7,
+                    label: "${(_opacityValue * 100).toInt()}%",
+                    onChanged: !_isDesktop
+                        ? null
+                        : (v) {
+                            setState(() => _opacityValue = v);
+                            WidgetsBinding.instance
+                                .addPostFrameCallback((_) async {
+                              await OverlayControlService
+                                  .setBackgroundOpacity(v);
+                            });
+                          },
                   ),
                 ),
-                Text(
-                  "${(_opacityValue * 100).toInt()}%",
+              ),
+              Text(
+                "${(_opacityValue * 100).toInt()}%",
                   style: const TextStyle(
                       fontSize: 13, color: Colors.blueAccent),
                 ),
@@ -358,6 +374,15 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
               color: _isOverlay ? Colors.greenAccent : Colors.blueAccent,
             ),
             onPressed: () async {
+              if (!_isDesktop) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("오버레이는 데스크톱에서만 지원됩니다."),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+                return;
+              }
               setState(() => _isOverlay = !_isOverlay);
               if (_isOverlay) {
                 await OverlayControlService.enterOverlayMode();
@@ -656,26 +681,45 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
 
   // ─────────────────────────────────────────────
 Widget _buildMemoPanel({required bool showBody}) {
-  return AnimatedContainer(
-    duration: const Duration(milliseconds: 240),
-    decoration: macWidgetDecoration(context),
-    child: Column(
-      children: [
-        buildMacHeader(
-          title: "Memo Pad",
-          collapsed: _memoCollapsed,
-          onToggle: () => setState(() => _memoCollapsed = !_memoCollapsed),
-        ),
+  final theme = Theme.of(context);
+  final titleStyle = theme.textTheme.titleMedium?.copyWith(
+    fontWeight: FontWeight.w700,
+    color: theme.colorScheme.onSurface,
+  );
 
-        if (showBody && !_memoCollapsed)
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: MemoPad(),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          children: [
+            Text("Memo Pad", style: titleStyle),
+            const Spacer(),
+            IconButton(
+              tooltip: _memoCollapsed ? "펼치기" : "접기",
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              icon: Icon(
+                _memoCollapsed
+                    ? Icons.keyboard_arrow_down
+                    : Icons.keyboard_arrow_up,
+                color: theme.colorScheme.primary,
+              ),
+              onPressed: () =>
+                  setState(() => _memoCollapsed = !_memoCollapsed),
             ),
+          ],
+        ),
+      ),
+      if (showBody && !_memoCollapsed)
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: MemoPad(showInlineTitle: false),
           ),
-      ],
-    ),
+        ),
+    ],
   );
 }
 

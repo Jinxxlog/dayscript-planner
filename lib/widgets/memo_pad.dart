@@ -3,7 +3,12 @@ import '../services/storage_service.dart';
 import '../theme/custom_colors.dart';
 
 class MemoPad extends StatefulWidget {
-  const MemoPad({super.key});
+  final bool showInlineTitle; // 상위에서 타이틀을 렌더링하면 false로 전달
+
+  const MemoPad({
+    super.key,
+    this.showInlineTitle = true,
+  });
 
   @override
   State<MemoPad> createState() => _MemoPadState();
@@ -46,75 +51,47 @@ class _MemoPadState extends State<MemoPad> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final textTheme = theme.textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-    final custom = Theme.of(context).extension<CustomColors>();
+    final colorScheme = theme.colorScheme;
 
-    return Card(
-      elevation: 1,
-      margin: const EdgeInsets.all(8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 상단 헤더
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "Notepad",
-                  style: textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: colorScheme.primary,
-                  ),
-                ),
-                if (_isSaving)
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-            // 본문 TextField
-            Expanded(
-              child: TextField(
-                controller: _memoController,
-                onChanged: (_) => _saveMemo(),
-                expands: true,
-                maxLines: null,
-                textAlignVertical: TextAlignVertical.top,
-                keyboardType: TextInputType.multiline,
-                style: textTheme.bodyMedium,
-                decoration: InputDecoration(
-                  hintText: "메모를 입력하세요...",
-                  filled: true,
-                  fillColor: Color.alphaBlend(
-                    // 🎨 calendarTodayFill 색상을 반투명하게 섞음
-                    (custom?.calendarTodayFill.withOpacity(0.3)) ?? Colors.transparent,
-                    colorScheme.surface,
-                  ),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: colorScheme.outlineVariant),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: colorScheme.primary, width: 1.5),
-                  ),
-                  contentPadding: const EdgeInsets.all(12),
-                ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.showInlineTitle)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: Text(
+              "Memo Pad.",
+              style: textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
               ),
             ),
-
-            const SizedBox(height: 8),
-          ],
+          ),
+        Expanded(
+          child: TextField(
+            controller: _memoController,
+            onChanged: (_) => _saveMemo(),
+            expands: true,
+            maxLines: null,
+            textAlignVertical: TextAlignVertical.top,
+            keyboardType: TextInputType.multiline,
+            style: textTheme.bodyMedium?.copyWith(
+              height: 1.5,
+              color: colorScheme.onSurface,
+            ),
+            decoration: const InputDecoration(
+              hintText: "오늘 떠오른 생각이나 메모를 남겨보세요.",
+              filled: true,
+              fillColor: Colors.transparent,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding:
+                  EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 }

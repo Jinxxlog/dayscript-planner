@@ -6,23 +6,48 @@ class CustomHoliday {
   final DateTime date;
   final String title;
   final String color; // "#FF0000" 같은 HEX 코드로 저장
+  final DateTime updatedAt;
+  final bool deleted;
 
   CustomHoliday({
     required this.date,
     required this.title,
     required this.color,
-  });
+    DateTime? updatedAt,
+    this.deleted = false,
+  }) : updatedAt = updatedAt ?? DateTime.now();
+
+  CustomHoliday copyWith({
+    DateTime? date,
+    String? title,
+    String? color,
+    DateTime? updatedAt,
+    bool? deleted,
+  }) {
+    return CustomHoliday(
+      date: date ?? this.date,
+      title: title ?? this.title,
+      color: color ?? this.color,
+      updatedAt: updatedAt ?? this.updatedAt,
+      deleted: deleted ?? this.deleted,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'date': date.toIso8601String(),
         'title': title,
         'color': color,
+        'updatedAt': updatedAt.toIso8601String(),
+        'deleted': deleted,
       };
 
   factory CustomHoliday.fromJson(Map<String, dynamic> json) => CustomHoliday(
         date: DateTime.parse(json['date']),
         title: json['title'],
         color: json['color'],
+        updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+            DateTime.now(),
+        deleted: json['deleted'] == true,
       );
 }
 
@@ -82,7 +107,11 @@ class HolidayService {
       await box.delete(existingKey);
     }
 
-    await box.put(holiday.date.toIso8601String(), holiday.toJson());
+    final payload = holiday.copyWith(
+      updatedAt: DateTime.now(),
+      deleted: false,
+    );
+    await box.put(holiday.date.toIso8601String(), payload.toJson());
   }
 
   // ─────────────────────────────────────────────

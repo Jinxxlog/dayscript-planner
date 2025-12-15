@@ -64,6 +64,7 @@ dependencies:
   firebase_auth: ^4.17.0
   cloud_firestore: ^4.15.0
   firebase_storage: ^11.6.0
+  connectivity_plus: ^6.1.0
 
   # --- Social Login (PC에서는 Google만 가능) ---
   google_sign_in: ^6.2.1

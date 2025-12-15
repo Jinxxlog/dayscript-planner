@@ -25,13 +25,15 @@ class WeeklyTodoAdapter extends TypeAdapter<WeeklyTodo> {
       endTime: fields[5] as DateTime?,
       textTime: fields[6] as String?,
       color: fields[7] as String,
+      updatedAt: fields[8] as DateTime?,
+      deleted: fields[9] as bool? ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, WeeklyTodo obj) {
     writer
-      ..writeByte(8)
+      ..writeByte(10)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -47,7 +49,11 @@ class WeeklyTodoAdapter extends TypeAdapter<WeeklyTodo> {
       ..writeByte(6)
       ..write(obj.textTime)
       ..writeByte(7)
-      ..write(obj.color);
+      ..write(obj.color)
+      ..writeByte(8)
+      ..write(obj.updatedAt)
+      ..writeByte(9)
+      ..write(obj.deleted);
   }
 
   @override

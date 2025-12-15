@@ -14,6 +14,7 @@ import 'services/theme_service.dart';
 import 'theme/themes.dart';
 import 'models/weekly_todo.dart';
 import 'pages/planner_home.dart';
+import 'pages/mobile_home.dart';
 import 'services/todo_service.dart';
 
 // Firebase
@@ -186,12 +187,31 @@ class _MyPlannerAppState extends State<MyPlannerApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _registerMultiWindowHandler();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _registerMultiWindowHandler() {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
+        if (call.method == 'themeChanged') {
+          final modeStr = call.arguments as String? ?? 'system';
+          final mode = switch (modeStr) {
+            'light' => ThemeMode.light,
+            'dark' => ThemeMode.dark,
+            _ => ThemeMode.system,
+          };
+          setState(() => _themeMode = mode);
+          await widget.themeService.saveThemeMode(mode);
+        }
+        return null;
+      });
+    }
   }
 
   @override
@@ -234,12 +254,18 @@ class _MyPlannerAppState extends State<MyPlannerApp>
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = Platform.isIOS || Platform.isAndroid;
     return MaterialApp(
       title: 'Dayscript',
       theme: buildLightTheme(),
       darkTheme: buildDarkTheme(),
       themeMode: _themeMode,
-      home: PlannerHomePage(onThemeChange: _handleThemeChange),
+      home: isMobile
+          ? MobileHomePage(
+              themeMode: _themeMode,
+              onThemeChange: _handleThemeChange,
+            )
+          : PlannerHomePage(onThemeChange: _handleThemeChange),
     );
   }
 }
