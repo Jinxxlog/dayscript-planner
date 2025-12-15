@@ -1,3 +1,4 @@
+import 'dart:io' if (dart.library.html) 'platform_stub.dart' show Platform;
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart'; // for isSameDay helper
 import '../widgets/calendar_widget.dart';
@@ -79,20 +80,10 @@ class _MobileHomePageState extends State<MobileHomePage> {
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () => FocusScope.of(context).unfocus(),
-        child: RefreshIndicator(
-          onRefresh: () => _sync.syncAll(),
-          child: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                    child: pages[_currentIndex],
-                  ),
-                );
-              },
-            ),
+        child: SafeArea(
+          child: IndexedStack(
+            index: _currentIndex,
+            children: pages,
           ),
         ),
       ),
@@ -475,9 +466,12 @@ class _SettingsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final authEnabled =
+        Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
     return SettingsHomePage(
       currentMode: currentMode,
       onThemeChange: (mode) => onThemeChange(mode.name),
+      authEnabled: authEnabled,
     );
   }
 }

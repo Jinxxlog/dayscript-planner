@@ -1,10 +1,13 @@
 // lib/main.dart
-import 'dart:io';
 import 'dart:convert';
+import 'dart:io' if (dart.library.html) 'platform_stub.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'services/startup_service.dart';   // ← 이거 반드시 추가
-import 'package:window_size/window_size.dart';
+import 'package:provider/provider.dart';
+import 'services/startup_service.dart';
+import 'package:window_size/window_size.dart'
+    if (dart.library.html) 'window_size_stub.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -16,23 +19,32 @@ import 'models/weekly_todo.dart';
 import 'pages/planner_home.dart';
 import 'pages/mobile_home.dart';
 import 'services/todo_service.dart';
+import 'services/auth_provider.dart';
+import 'pages/login_page.dart';
 
 // Firebase
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
-// 멀티윈도우
-import 'package:desktop_multi_window/desktop_multi_window.dart';
+// ë©€í‹°ìœˆë„ìš°
+import 'package:desktop_multi_window/desktop_multi_window.dart'
+    if (dart.library.html) 'desktop_multi_window_stub.dart';
 import 'multi_window.dart';
 
 
 Future<void> main(List<String> args) async {
-
+  WidgetsFlutterBinding.ensureInitialized();
   await StartupService.init();
 
-  WidgetsFlutterBinding.ensureInitialized();
+  final bool firebaseSupported =
+      kIsWeb || Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+  if (firebaseSupported && Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
 
-  // 🚪 1) 서브 윈도우 진입 분기 (settings 등)
+  // ðŸšª 1) ì„œë¸Œ ìœˆë„ìš° ì§„ìž… ë¶„ê¸° (settings ë“±)
   if (args.isNotEmpty && args.first == 'multi_window') {
     Map<String, dynamic> params = {};
     if (args.length > 1) {
@@ -42,50 +54,52 @@ Future<void> main(List<String> args) async {
     }
 
     runApp(MultiWindowApp(args: params));
-    return; // ❗ 메인 초기화 코드로 내려가지 않게 여기서 끝내기
+    return; // â— ë©”ì¸ ì´ˆê¸°í™” ì½”ë“œë¡œ ë‚´ë ¤ê°€ì§€ ì•Šê²Œ ì—¬ê¸°ì„œ ëë‚´ê¸°
   }
 
-  // 🚪 2) 여기부터는 "메인 윈도우" 전용 초기화
+  // ðŸšª 2) ì—¬ê¸°ë¶€í„°ëŠ” "ë©”ì¸ ìœˆë„ìš°" ì „ìš© ì´ˆê¸°í™”
   await Hive.initFlutter();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  if (firebaseSupported && Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
 
-  // 🔸 더 이상 initialize() 필요 없음
+  // ðŸ”¸ ë” ì´ìƒ initialize() í•„ìš” ì—†ìŒ
   // if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
   //   DesktopMultiWindow.initialize();
   // }
 
-  //초기화용 임시 코드
+  //ì´ˆê¸°í™”ìš© ìž„ì‹œ ì½”ë“œ
   //await Hive.deleteBoxFromDisk('recurring_events');
 
-  // ✅ Hive 어댑터 등록
+  // âœ… Hive ì–´ëŒ‘í„° ë“±ë¡
   Hive.registerAdapter(WeeklyTodoAdapter());
 
-  // ✅ 투두용 박스 2개 오픈
+  // âœ… íˆ¬ë‘ìš© ë°•ìŠ¤ 2ê°œ ì˜¤í”ˆ
   await Hive.openBox('weekly_todos_main');
   await Hive.openBox('weekly_todos_dialog');
 
-  // ✅ 투두 상태 저장용 박스 미리 오픈
+  // âœ… íˆ¬ë‘ ìƒíƒœ ì €ìž¥ìš© ë°•ìŠ¤ ë¯¸ë¦¬ ì˜¤í”ˆ
   //final todoService = TodoService();
   //await todoService.loadDailyState(DateTime.now());
 
-  // ✅ 서비스 초기화
+  // âœ… ì„œë¹„ìŠ¤ ì´ˆê¸°í™”
   await HolidayService().init();
   await RecurringService().init();
 
-  // ✅ 데스크탑 창 세팅
+  // âœ… ë°ìŠ¤í¬íƒ‘ ì°½ ì„¸íŒ…
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     setWindowTitle('Dayscript');
 
-    // ✅ 초기 기본 크기만 설정 (고정 X)
+    // âœ… ì´ˆê¸° ê¸°ë³¸ í¬ê¸°ë§Œ ì„¤ì • (ê³ ì • X)
     setWindowFrame(const Rect.fromLTWH(0, 0, 1920, 1080));
 
-    // ✅ 최소 크기 (너무 작지만 않으면 됨)R
+    // âœ… ìµœì†Œ í¬ê¸° (ë„ˆë¬´ ìž‘ì§€ë§Œ ì•Šìœ¼ë©´ ë¨)R
     setWindowMinSize(const Size(900, 600));
 
-    // ✅ 최대 크기 제한 제거 (무제한 리사이즈 가능)
+    // âœ… ìµœëŒ€ í¬ê¸° ì œí•œ ì œê±° (ë¬´ì œí•œ ë¦¬ì‚¬ì´ì¦ˆ ê°€ëŠ¥)
     setWindowMaxSize(Size.infinite);
 
     final prefs = await SharedPreferences.getInstance();
@@ -100,18 +114,18 @@ Future<void> main(List<String> args) async {
       if (screen != null) {
         final frame = screen.frame;
 
-        // ✅ 화면 영역 안쪽으로 좌표 보정 + double 변환
+        // âœ… í™”ë©´ ì˜ì—­ ì•ˆìª½ìœ¼ë¡œ ì¢Œí‘œ ë³´ì • + double ë³€í™˜
         final safeLeft = left.clamp(frame.left, frame.right - 400).toDouble();
         final safeTop = top.clamp(frame.top, frame.bottom - 300).toDouble();
 
-        // ✅ 최소 창 크기 보정 + double 변환
+        // âœ… ìµœì†Œ ì°½ í¬ê¸° ë³´ì • + double ë³€í™˜
         final safeWidth = (width < 800 ? 1280 : width).toDouble();
         final safeHeight = (height < 600 ? 900 : height).toDouble();
 
         setWindowFrame(Rect.fromLTWH(safeLeft, safeTop, safeWidth, safeHeight));
       }
     } else {
-      // ✅ 처음 실행 시 중앙 정렬 유지
+      // âœ… ì²˜ìŒ ì‹¤í–‰ ì‹œ ì¤‘ì•™ ì •ë ¬ ìœ ì§€
       final screen = await getCurrentScreen();
       if (screen != null) {
         final frame = screen.frame;
@@ -125,7 +139,7 @@ Future<void> main(List<String> args) async {
   }
 
 
-  // ✅ Windows 종료 시 창 크기/위치 저장 훅 연결
+  // âœ… Windows ì¢…ë£Œ ì‹œ ì°½ í¬ê¸°/ìœ„ì¹˜ ì €ìž¥ í›… ì—°ê²°
   if (Platform.isWindows) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       attachWindowCloseHandler();
@@ -133,19 +147,28 @@ Future<void> main(List<String> args) async {
   }
 
 
-  // ✅ 초기 ThemeMode 로드 후 앱 실행
+  // âœ… ì´ˆê¸° ThemeMode ë¡œë“œ í›„ ì•± ì‹¤í–‰
   final themeService = ThemeService();
   final initialMode = await themeService.loadThemeMode();
-  runApp(MyPlannerApp(themeService: themeService, initialMode: initialMode));
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => AuthProvider(enabled: firebaseSupported),
+      child:
+          MyPlannerApp(
+              themeService: themeService,
+              initialMode: initialMode,
+              supportsAuth: firebaseSupported),
+    ),
+  );
 }
 
-// ✅ 창 닫힘 이벤트 감지 + 직접 저장 실행
+// âœ… ì°½ ë‹«íž˜ ì´ë²¤íŠ¸ ê°ì§€ + ì§ì ‘ ì €ìž¥ ì‹¤í–‰
 void attachWindowCloseHandler() async {
   const WM_CLOSE = 0x0010;
 
-  // 창 종료 감지 (window_size 패키지 방식)
+  // ì°½ ì¢…ë£Œ ê°ì§€ (window_size íŒ¨í‚¤ì§€ ë°©ì‹)
   getWindowInfo().then((info) {
-    // 종료 순간 저장
+    // ì¢…ë£Œ ìˆœê°„ ì €ìž¥
     saveWindowSizeDirect();
   });
 }
@@ -167,10 +190,12 @@ Future<void> saveWindowSizeDirect() async {
 class MyPlannerApp extends StatefulWidget {
   final ThemeService themeService;
   final ThemeMode initialMode;
+  final bool supportsAuth;
   const MyPlannerApp({
     super.key,
     required this.themeService,
     required this.initialMode,
+    required this.supportsAuth,
   });
 
   @override
@@ -181,7 +206,7 @@ class _MyPlannerAppState extends State<MyPlannerApp>
     with WidgetsBindingObserver {
   late ThemeMode _themeMode = widget.initialMode;
 
-  final _todoService = TodoService(); // 그냥 유지
+  final _todoService = TodoService(); // ê·¸ëƒ¥ ìœ ì§€
 
   @override
   void initState() {
@@ -255,17 +280,30 @@ class _MyPlannerAppState extends State<MyPlannerApp>
   @override
   Widget build(BuildContext context) {
     final isMobile = Platform.isIOS || Platform.isAndroid;
+    final supportsAuth = widget.supportsAuth;
     return MaterialApp(
       title: 'Dayscript',
       theme: buildLightTheme(),
       darkTheme: buildDarkTheme(),
       themeMode: _themeMode,
-      home: isMobile
-          ? MobileHomePage(
-              themeMode: _themeMode,
-              onThemeChange: _handleThemeChange,
-            )
-          : PlannerHomePage(onThemeChange: _handleThemeChange),
+      routes: supportsAuth ? {'/login': (_) => const LoginPage()} : const {},
+      home: Consumer<AuthProvider>(
+        builder: (context, auth, _) {
+          if (!supportsAuth) {
+            // Desktop(Windows 등)에서 Firebase 미지원 시 로그인 건너뜀
+            return PlannerHomePage(onThemeChange: _handleThemeChange);
+          }
+          if (!auth.isAuthenticated) {
+            return const LoginPage();
+          }
+          return isMobile
+              ? MobileHomePage(
+                  themeMode: _themeMode,
+                  onThemeChange: _handleThemeChange,
+                )
+              : PlannerHomePage(onThemeChange: _handleThemeChange);
+        },
+      ),
     );
   }
 }

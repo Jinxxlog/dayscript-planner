@@ -1,11 +1,11 @@
 {
-    "name": "my_planner",
-    "short_name": "my_planner",
+    "name": "DayScript",
+    "short_name": "DayScript",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0c1a2c",
+    "theme_color": "#0c1a2c",
+    "description": "DayScript - 캘린더·투두·메모를 기기 간 동기화합니다.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

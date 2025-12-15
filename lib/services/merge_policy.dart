@@ -144,7 +144,7 @@ String _recurringKey(RecurringEvent e) {
   final ym = e.yearMonth ?? 0;
   final yd = e.yearDay ?? 0;
   final rule = e.rule ?? '';
-  return '${e.title}__${e.cycleType.name}__${ym}_$yd__${rule.isEmpty ? e.startDate.toIso8601String() : rule}';
+  return '${e.title}__${e.cycleType.name}__${ym}_${yd}__${rule.isEmpty ? e.startDate.toIso8601String() : rule}';
 }
 
 MergeResult<RecurringEvent> mergeRecurring({

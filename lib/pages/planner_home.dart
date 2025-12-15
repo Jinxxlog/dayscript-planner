@@ -1,7 +1,7 @@
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'dart:async';
 import 'dart:ui'; // 🔹 Blur 효과를 위한 ImageFilter
-import 'dart:io' show Platform;
+import 'dart:io' if (dart.library.html) '../platform_stub.dart' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,7 +14,8 @@ import '../widgets/memo_pad.dart';
 import '../widgets/todo_list.dart';
 import '../services/overlay_control_service.dart';
 import 'package:flutter/foundation.dart';
-import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:desktop_multi_window/desktop_multi_window.dart'
+    if (dart.library.html) '../desktop_multi_window_stub.dart';
 import 'dart:convert';
 import '../widgets/ui/macos_panel_style.dart';
 

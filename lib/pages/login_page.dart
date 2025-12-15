@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import 'package:provider/provider.dart';
+
+import '../services/auth_service.dart';
+import '../services/auth_provider.dart' as app_auth;
 import 'package:firebase_auth/firebase_auth.dart';
 
 class LoginPage extends StatefulWidget {
@@ -11,50 +14,33 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   bool _loading = false;
+  final _authService = AuthService();
 
-  // ⭐ 데스크탑 GoogleSignIn 설정
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId:
-        "226614486302-7av3i5qg8km1p0hjgph6hh8q9df6sl2o.apps.googleusercontent.com", // 데스크탑 OAuth ID
-    scopes: [
-      "email",
-      "profile",
-    ],
-  );
-
-  Future<void> _signInWithGoogle() async {
+  Future<void> _handle(Future<UserCredential> Function() action) async {
     try {
       setState(() => _loading = true);
-
-      // Google 로그인 UI 띄우기
-      final googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) {
-        setState(() => _loading = false);
-        return; // 로그인 취소
-      }
-
-      final googleAuth = await googleUser.authentication;
-
-      // Firebase Auth로 연결
-      final credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-        accessToken: googleAuth.accessToken,
-      );
-
-      await FirebaseAuth.instance.signInWithCredential(credential);
-
-      if (mounted) Navigator.pop(context); // 로그인 성공 → 창 닫기
+      await action();
+      if (mounted) Navigator.pop(context);
     } catch (e) {
-      debugPrint("로그인 실패: $e");
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text("로그인 실패: $e")));
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _placeholder(String provider) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("$provider 로그인은 추후 추가 예정입니다.")),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<app_auth.AuthProvider>();
+    final user = auth.user;
+
     return Scaffold(
       appBar: AppBar(title: const Text("로그인")),
       body: Padding(
@@ -63,43 +49,99 @@ class _LoginPageState extends State<LoginPage> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Text(
-              "DayScript 계정 로그인",
+              "DayScript에 로그인",
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 20),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _loading ? null : _signInWithGoogle,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  backgroundColor: Colors.white,
-                  foregroundColor: Colors.black87,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: _loading
-                    ? const CircularProgressIndicator()
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Image.asset("assets/google.png",
-                              width: 24, height: 24),
-                          const SizedBox(width: 10),
-                          const Text("Google로 로그인"),
-                        ],
-                      ),
+            if (user != null) ...[
+              Text(
+                user.isAnonymous
+                    ? "게스트 사용자"
+                    : (user.displayName ?? user.email ?? "사용자"),
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
               ),
-            ),
-
-            const SizedBox(height: 40),
-            const Text(
-              "로그인하면 동기화, 백업, 공명 퀘스트 등을 사용할 수 있어요!",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
-            )
+              const SizedBox(height: 6),
+              Text(user.email ?? "", style: const TextStyle(color: Colors.grey)),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : () => auth.signOut(),
+                  child: const Text("로그아웃"),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: _loading ? null : () => auth.deleteAccount(),
+                  child: const Text("계정 삭제"),
+                ),
+              ),
+            ] else ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed:
+                      _loading ? null : () => _handle(() => _authService.signInWithGoogle()),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.black87,
+                    side: const BorderSide(color: Colors.black12),
+                  ),
+                  child: _loading
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(width: 10),
+                            const Text("Google 로그인"),
+                          ],
+                        ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : () => _placeholder("Kakao"),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text("Kakao 로그인 (준비중)"),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : () => _placeholder("Naver"),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text("Naver 로그인 (준비중)"),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed:
+                      _loading ? null : () => _handle(() => _authService.signInAnonymously()),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text("게스트(익명) 로그인"),
+                ),
+              ),
+            ],
           ],
         ),
       ),
