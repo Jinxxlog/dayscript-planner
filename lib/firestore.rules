@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ───────────────
+     * Helper
+     * ─────────────── */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    /* ───────────────
+     * (A) PC 연동 키 검증용 — 서버 전용
+     * ─────────────── */
+    match /deviceSecretsByHash/{hash} {
+      allow read, write: if false;
+    }
+
+    /* ───────────────
+     * (B) 사용자 문서
+     * ─────────────── */
+    match /users/{uid} {
+
+      // 🔹 본인만 읽기 가능 (PC에서 tokenVersion 읽기 필요)
+      allow read: if isOwner(uid);
+
+      // 🔹 create: 최초 로그인 시 프로필 생성 허용
+      allow create: if isOwner(uid);
+
+      // 🔹 update: "프로필 필드만" 허용
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data).changedKeys()
+          .hasOnly([
+            'displayName',
+            'photoURL',
+            'updatedAt'
+          ]);
+
+      // ❌ delete는 금지
+      allow delete: if false;
+
+      /* ─────────────
+       * (C) 연결된 PC 목록
+       * ───────────── */
+      match /devices/{deviceId} {
+
+        // 본인만 읽기
+        allow read: if isOwner(uid);
+
+        // ❌ 생성/삭제는 서버(Function)만
+        allow create, delete: if false;
+
+        // 🔹 클라는 nickname만 수정 가능
+        allow update: if isOwner(uid)
+          && request.resource.data.diff(resource.data).changedKeys()
+            .hasOnly(['nickname'])
+          && request.resource.data.nickname is string
+          && request.resource.data.nickname.size() <= 30;
+      }
+    }
+
+    /* ───────────────
+     * 그 외 전부 차단
+     * ─────────────── */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

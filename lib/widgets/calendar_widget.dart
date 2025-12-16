@@ -2,12 +2,10 @@
 
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:lunar/lunar.dart';
@@ -17,6 +15,7 @@ import '../models/calendar_memo.dart';
 import '../services/holiday_service.dart';
 import '../services/calendar_data_service.dart';
 import '../services/recurring_service.dart';
+import '../services/memo_store.dart';
 import '../widgets/memo_side_sheet.dart';
 
 // ─────────────────────────────────────────────
@@ -30,6 +29,7 @@ class CalendarWidget extends StatefulWidget {
   final bool isGoingBack;
   final bool compact; // 모바일 소형 뷰 여부
   final bool useBottomSheetForMemo; // 모바일 메모 바텀시트 사용 여부
+  final bool openMemoOnDayTap;
   final double? rowHeight;
   final ValueChanged<DateTime>? onPageChanged;
 
@@ -42,6 +42,7 @@ class CalendarWidget extends StatefulWidget {
     this.isGoingBack = false,
     this.compact = false,
     this.useBottomSheetForMemo = false,
+    this.openMemoOnDayTap = true,
     this.rowHeight,
     this.onPageChanged,
   });
@@ -61,6 +62,7 @@ class _CalendarWidgetState extends State<CalendarWidget> {
   List<CustomHoliday> _customHolidays = [];
   List<RecurringEvent> _recurrings = [];
   final _calendarDataService = CalendarDataService();
+  final _memoStore = CalendarMemoStore();
 
   // ─── 컨트롤러/서비스 ───
   final holidayService = HolidayService();
@@ -113,34 +115,14 @@ class _CalendarWidgetState extends State<CalendarWidget> {
   // 💾 메모 저장/로드
   // ─────────────────────────────────────────────
   Future<void> _saveMemos() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final jsonMap = _memos.map((key, list) {
-      return MapEntry(
-        key,
-        list.map((m) => m.toJson()).toList(),
-      );
-    });
-
-    await prefs.setString("calendar_memos", json.encode(jsonMap));
+    await _memoStore.saveByDate(_memos);
   }
 
   Future<void> _loadMemos() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonString = prefs.getString("calendar_memos");
-    if (jsonString == null) return;
-
-    final decoded = json.decode(jsonString) as Map<String, dynamic>;
+    final decoded = await _memoStore.loadByDate();
 
     setState(() {
-      _memos = decoded.map((key, value) {
-        final list =
-            (value as List).map((m) {
-              final memo = CalendarMemo.fromJson(m);
-              return memo.dateKey == null ? memo.copyWith(dateKey: key) : memo;
-            }).toList();
-        return MapEntry(key, list);
-      });
+      _memos = decoded;
     });
   }
 
@@ -151,12 +133,10 @@ class _CalendarWidgetState extends State<CalendarWidget> {
     );
     if (!confirm) return;
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove("calendar_memos");
-
     setState(() {
       _memos.clear();
     });
+    await _memoStore.saveByDate(_memos);
   }
 
   Future<void> _showMemoBottomSheet(DateTime day) async {
@@ -1802,16 +1782,20 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                   HapticFeedback.lightImpact();
 
                   widget.onDaySelected(selectedDay, focusedDay);
+                  final shouldOpenMemo = widget.openMemoOnDayTap;
 
                   setState(() {
                     _selectedDay = selectedDay;
-                    _memoSelectedDay = selectedDay;
-                    // PC에서 자동으로 메모 사이드 시트를 열지 않도록 기본값은 닫힘 유지.
-                    _isMemoSheetOpen = false;
+                    if (shouldOpenMemo) {
+                      _memoSelectedDay = selectedDay;
+                      // PC에서 자동으로 메모 사이드 시트를 열지 않도록 기본값은 닫힘 유지.
+                      _isMemoSheetOpen = true;
+                    }
                     _calendarVersion++;
                   });
 
-                  if (widget.useBottomSheetForMemo) {
+                  if (shouldOpenMemo &&
+                      widget.useBottomSheetForMemo) {
                     _showMemoBottomSheet(selectedDay);
                   }
                 },

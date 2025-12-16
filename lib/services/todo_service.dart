@@ -1,12 +1,17 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/weekly_todo.dart';
 import '../models/todo.dart';
+import 'local_scope.dart';
 import 'dart:convert'; // ✅ jsonEncode / jsonDecode 사용을 위해 필요
 
 class TodoService {
-  static const String mainBoxName = 'weekly_todos_main';
-  static const String dialogBoxName = 'weekly_todos_dialog';
-  static const String dailyBoxName = 'planner_daily_todos_state_box';
+  static const String _legacyMainBoxName = 'weekly_todos_main';
+  static const String _legacyDialogBoxName = 'weekly_todos_dialog';
+  static const String _legacyDailyBoxName = 'planner_daily_todos_state_box';
+
+  String get _mainBoxName => LocalScope.weeklyMainBox;
+  String get _dialogBoxName => LocalScope.weeklyDialogBox;
+  String get _dailyBoxName => LocalScope.dailyTodosBox;
 
   // ─────────────────────────────────────────────
   // ✅ 공통 초기화
@@ -18,18 +23,28 @@ class TodoService {
   }
 
   Future<Box> _openBox({bool fromMain = false}) async {
-    final name = fromMain ? mainBoxName : dialogBoxName;
+    final name = fromMain ? _mainBoxName : _dialogBoxName;
     // ✅ 제네릭 제거
-    return await Hive.openBox(name);
+    final box = await Hive.openBox(name);
+    await _migrateLegacyBox(
+      targetBox: box,
+      legacyName: fromMain ? _legacyMainBoxName : _legacyDialogBoxName,
+    );
+    return box;
   }
 
 
   Future<Box> _openDailyBox() async {
     // 이미 열려있으면 바로 반환 (중복 open 방지)
-    if (Hive.isBoxOpen(dailyBoxName)) {
-      return Hive.box(dailyBoxName);
+    if (Hive.isBoxOpen(_dailyBoxName)) {
+      return Hive.box(_dailyBoxName);
     }
-    return await Hive.openBox(dailyBoxName);
+    final box = await Hive.openBox(_dailyBoxName);
+    await _migrateLegacyBox(
+      targetBox: box,
+      legacyName: _legacyDailyBoxName,
+    );
+    return box;
   }
 
   // ─────────────────────────────────────────────
@@ -102,7 +117,7 @@ class TodoService {
     }
 
     // 🔹 일주일 전~후 7일 포함
-    for (int offset = -7; offset <= 7; offset++) {
+    for (int offset = -365; offset <= 365; offset++) {
       final date = now.add(Duration(days: offset));
       final weekday = date.weekday;
       final key = _dateKey(date);
@@ -154,7 +169,7 @@ class TodoService {
     final dailyBox = await _openDailyBox();
     final now = DateTime.now();
 
-    for (int offset = -7; offset <= 7; offset++) {
+    for (int offset = -365; offset <= 365; offset++) {
       final date = now.add(Duration(days: offset));
       if (!daysToUpdate.contains(date.weekday)) continue; // ✅ 선택된 요일만 갱신
 
@@ -207,7 +222,7 @@ class TodoService {
     final now = DateTime.now();
 
     // 🔹 2주 범위 (지난 7일~앞으로 7일)
-    for (int offset = -7; offset <= 7; offset++) {
+    for (int offset = -365; offset <= 365; offset++) {
       final date = now.add(Duration(days: offset));
       final key = _dateKey(date);
       final existingData = dailyBox.get(key);
@@ -532,4 +547,21 @@ class TodoService {
     }
   }
 
+  Future<void> _migrateLegacyBox({
+    required Box targetBox,
+    required String legacyName,
+  }) async {
+    if (targetBox.name == legacyName) return;
+    if (!await Hive.boxExists(legacyName)) return;
+
+    final legacy = await Hive.openBox(legacyName);
+    if (targetBox.isEmpty && legacy.isNotEmpty) {
+      await targetBox.putAll(legacy.toMap());
+      await legacy.clear();
+    }
+
+    if (legacy.isOpen) {
+      await legacy.close();
+    }
+  }
 }

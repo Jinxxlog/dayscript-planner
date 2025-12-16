@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/weekly_todo.dart';
 import '../models/todo.dart';
 import '../services/todo_service.dart';
+import '../services/local_scope.dart';
 import '../widgets/weekly_todo_dialog.dart';
 import '../widgets/calendar_widget.dart';
 import '../widgets/memo_pad.dart';
@@ -109,13 +110,14 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
 
   Future<void> _checkNewDay() async {
     final prefs = await SharedPreferences.getInstance();
-    final lastDate = prefs.getString('last_date');
+    final lastDateKey = LocalScope.prefKeyWithBase('last_date');
+    final lastDate = prefs.getString(lastDateKey);
     final today = DateTime.now();
     final todayKey = "${today.year}-${today.month}-${today.day}";
 
     if (lastDate != todayKey) {
       await _todoService.syncTodayFromDialog();
-      await prefs.setString('last_date', todayKey);
+      await prefs.setString(lastDateKey, todayKey);
     }
   }
 
@@ -129,8 +131,9 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
         await _todoService.syncTodayFromDialog();
         await _loadTodosByDate(now);
         final prefs = await SharedPreferences.getInstance();
+        final lastDateKey = LocalScope.prefKeyWithBase('last_date');
         await prefs.setString(
-            'last_date', "${now.year}-${now.month}-${now.day}");
+            lastDateKey, "${now.year}-${now.month}-${now.day}");
       }
     });
   }
@@ -444,6 +447,7 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
                     focusedDay: _focusedDay,
                     selectedDay: _selectedDay,
                     isGoingBack: _isGoingBack,
+                    openMemoOnDayTap: false,
                     onDaySelected: (selectedDay, focusedDay) async {
                       setState(() {
                         _isGoingBack = focusedDay.isBefore(_focusedDay);

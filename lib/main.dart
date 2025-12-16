@@ -14,16 +14,18 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'services/holiday_service.dart';
 import 'services/recurring_service.dart';
 import 'services/theme_service.dart';
+import 'services/local_scope.dart';
 import 'theme/themes.dart';
 import 'models/weekly_todo.dart';
 import 'pages/planner_home.dart';
 import 'pages/mobile_home.dart';
 import 'services/todo_service.dart';
-import 'services/auth_provider.dart';
+import 'services/auth_provider.dart' as app_auth;
 import 'pages/login_page.dart';
 
 // Firebase
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 
 // ë©€í‹°ìœˆë„ìš°
@@ -78,8 +80,9 @@ Future<void> main(List<String> args) async {
   Hive.registerAdapter(WeeklyTodoAdapter());
 
   // âœ… íˆ¬ë‘ìš© ë°•ìŠ¤ 2ê°œ ì˜¤í”ˆ
-  await Hive.openBox('weekly_todos_main');
-  await Hive.openBox('weekly_todos_dialog');
+  await Hive.openBox(LocalScope.weeklyMainBox);
+  await Hive.openBox(LocalScope.weeklyDialogBox);
+  await Hive.openBox(LocalScope.dailyTodosBox);
 
   // âœ… íˆ¬ë‘ ìƒíƒœ ì €ìž¥ìš© ë°•ìŠ¤ ë¯¸ë¦¬ ì˜¤í”ˆ
   //final todoService = TodoService();
@@ -151,13 +154,12 @@ Future<void> main(List<String> args) async {
   final themeService = ThemeService();
   final initialMode = await themeService.loadThemeMode();
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AuthProvider(enabled: firebaseSupported),
-      child:
-          MyPlannerApp(
-              themeService: themeService,
-              initialMode: initialMode,
-              supportsAuth: firebaseSupported),
+    ChangeNotifierProvider<app_auth.AuthProvider>(
+      create: (_) => app_auth.AuthProvider(enabled: firebaseSupported),
+      child: MyPlannerApp(
+          themeService: themeService,
+          initialMode: initialMode,
+          supportsAuth: firebaseSupported),
     ),
   );
 }
@@ -207,6 +209,8 @@ class _MyPlannerAppState extends State<MyPlannerApp>
   late ThemeMode _themeMode = widget.initialMode;
 
   final _todoService = TodoService(); // ê·¸ëƒ¥ ìœ ì§€
+  String? _lastLoggedUid;
+  bool _lastLoggedAnon = false;
 
   @override
   void initState() {
@@ -261,6 +265,17 @@ class _MyPlannerAppState extends State<MyPlannerApp>
     }
   }
 
+  void _logAuthState(User? user) {
+    final uid = user?.uid;
+    final isAnon = user?.isAnonymous ?? true;
+    if (_lastLoggedUid == uid && _lastLoggedAnon == isAnon) return;
+    _lastLoggedUid = uid;
+    _lastLoggedAnon = isAnon;
+
+    print("AUTH uid = ${FirebaseAuth.instance.currentUser?.uid}");
+    print("AUTH isAnonymous = ${FirebaseAuth.instance.currentUser?.isAnonymous}");
+  }
+
   Future<void> _handleThemeChange(String mode) async {
     switch (mode) {
       case 'light':
@@ -287,7 +302,7 @@ class _MyPlannerAppState extends State<MyPlannerApp>
       darkTheme: buildDarkTheme(),
       themeMode: _themeMode,
       routes: supportsAuth ? {'/login': (_) => const LoginPage()} : const {},
-      home: Consumer<AuthProvider>(
+      home: Consumer<app_auth.AuthProvider>(
         builder: (context, auth, _) {
           if (!supportsAuth) {
             // Desktop(Windows 등)에서 Firebase 미지원 시 로그인 건너뜀
@@ -296,6 +311,7 @@ class _MyPlannerAppState extends State<MyPlannerApp>
           if (!auth.isAuthenticated) {
             return const LoginPage();
           }
+          _logAuthState(auth.user);
           return isMobile
               ? MobileHomePage(
                   themeMode: _themeMode,
