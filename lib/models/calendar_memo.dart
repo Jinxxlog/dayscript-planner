@@ -45,15 +45,18 @@ class CalendarMemo {
       return null;
     }
 
+    final createdAt = parseDate(json['createdAt']) ?? DateTime.now();
+    final updatedAt = parseDate(json['updatedAt']) ?? createdAt;
+
     return CalendarMemo(
       id: json['id'] as String,
       text: json['text'] as String? ?? '',
-      createdAt: parseDate(json['createdAt']) ?? DateTime.now(),
+      createdAt: createdAt,
       color: (json['color'] as String?)?.trim().isNotEmpty == true
           ? json['color'] as String
           : '#FFA000',
       dateKey: json['dateKey'] as String?,
-      updatedAt: parseDate(json['updatedAt']) ?? DateTime.now(),
+      updatedAt: updatedAt,
       deleted: json['deleted'] == true,
     );
   }

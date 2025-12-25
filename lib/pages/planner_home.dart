@@ -9,6 +9,9 @@ import '../models/weekly_todo.dart';
 import '../models/todo.dart';
 import '../services/todo_service.dart';
 import '../services/local_scope.dart';
+import '../services/sync_coordinator.dart';
+import '../services/local_change_notifier.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../widgets/weekly_todo_dialog.dart';
 import '../widgets/calendar_widget.dart';
 import '../widgets/memo_pad.dart';
@@ -43,6 +46,11 @@ class PlannerHomePage extends StatefulWidget {
 
 class _PlannerHomePageState extends State<PlannerHomePage> {
   final _todoService = TodoService();
+  final _sync = SyncCoordinator();
+  StreamSubscription<String>? _localSub;
+  StreamSubscription<User?>? _authSub;
+  String? _lastUid;
+  bool _lastAnon = true;
 
   bool _todoCollapsed = false; // 투두 접힘 여부
   bool _memoCollapsed = false; // 메모 접힘 여부
@@ -66,8 +74,12 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
   void initState() {
     super.initState();
     OverlayControlService.init(); // 🪟 window_manager 초기화
+    _sync.startNetworkListener();
+    _listenLocalChanges();
+    _listenAuthChanges();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await Future.delayed(const Duration(milliseconds: 300));
+      await _sync.syncAll();
       await OverlayControlService.init(); // ✅ 윈도우 초기화
       await _initializeData();
       await Future.delayed(const Duration(milliseconds: 200));
@@ -81,7 +93,34 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
   @override
   void dispose() {
     _midnightTimer?.cancel();
+    _localSub?.cancel();
+    _authSub?.cancel();
+    _sync.dispose();
     super.dispose();
+  }
+
+  void _listenLocalChanges() {
+    _localSub ??= LocalChangeNotifier.stream.listen((area) async {
+      if (!mounted) return;
+      if (area == 'todos') {
+        await _loadTodosByDate(_selectedDay);
+      }
+    });
+  }
+
+  void _listenAuthChanges() {
+    _authSub ??= FirebaseAuth.instance.authStateChanges().listen((user) async {
+      final uid = user?.uid;
+      final anon = user?.isAnonymous ?? true;
+      if (_lastUid == uid && _lastAnon == anon) return;
+      _lastUid = uid;
+      _lastAnon = anon;
+
+      if (!mounted) return;
+      await _sync.syncAll();
+      await _initializeData();
+      await _loadTodosByDate(_selectedDay);
+    });
   }
 
   // ─────────────────────────────────────────────
@@ -139,6 +178,14 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
   }
 
   Future<void> _loadTodosByDate(DateTime date) async {
+    final todos = await _todoService.loadDailyTodosMerged(date);
+    if (!mounted) return;
+    setState(() => _todos = todos);
+    return;
+
+    /*
+
+    await _todoService.syncDayFromDialog(date);
     final todos = await _todoService.loadDailyState(date);
 
     if (todos.isNotEmpty) {
@@ -171,6 +218,7 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
     setState(() {
       _todos = generated;
     });
+    */
   }
 
   // ✅ 완료 상태 토글 (체크 반영 즉시 저장)
@@ -302,18 +350,29 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
               return;
             }
             // 👉 새 설정창 띄우기 (desktop_multi_window)
-            final window = await DesktopMultiWindow.createWindow(
-              jsonEncode({
-                'page': 'settings',
-              }),
-            );
+            try {
+              final window = await DesktopMultiWindow.createWindow(
+                jsonEncode({
+                  'page': 'settings',
+                }),
+              );
 
-            window
-              ..setFrame(const Offset(100, 100) & const Size(600, 700))
-              ..setTitle("Settings - DayScript")
-              ..show();
+              window
+                ..setFrame(const Offset(100, 100) & const Size(600, 700))
+                ..setTitle("Settings - DayScript")
+                ..show();
 
-            debugPrint("🪟 설정 창 생성 완료!");
+              debugPrint('Opened settings window');
+            } catch (e) {
+              debugPrint("Failed to open settings window: $e");
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to open settings: $e'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
           },
         ),
         title: const Text("DayScript"),
@@ -330,16 +389,19 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.opacity_rounded,
-                    size: 20, color: Colors.blueAccent),
+                Icon(
+                  Icons.opacity_rounded,
+                  size: 20,
+                  color: theme.colorScheme.primary,
+                ),
                 SizedBox(
                   width: 100,
                   child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: Colors.blueAccent,
+                    activeTrackColor: theme.colorScheme.primary,
                     inactiveTrackColor:
-                        Colors.blueAccent.withOpacity(0.2),
-                    thumbColor: Colors.blueAccent,
+                        theme.colorScheme.primary.withOpacity(0.2),
+                    thumbColor: theme.colorScheme.primary,
                     trackHeight: 3,
                   ),
                   child: Slider(
@@ -361,10 +423,12 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
                   ),
                 ),
               ),
-              Text(
-                "${(_opacityValue * 100).toInt()}%",
-                  style: const TextStyle(
-                      fontSize: 13, color: Colors.blueAccent),
+                Text(
+                  "${(_opacityValue * 100).toInt()}%",
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.primary,
+                  ),
                 ),
               ],
             ),
@@ -375,7 +439,9 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
             tooltip: _isOverlay ? "일반 모드로 복귀" : "오버레이 모드 전환",
             icon: Icon(
               _isOverlay ? Icons.desktop_windows : Icons.layers,
-              color: _isOverlay ? Colors.greenAccent : Colors.blueAccent,
+              color: _isOverlay
+                  ? theme.colorScheme.secondary
+                  : theme.colorScheme.primary,
             ),
             onPressed: () async {
               if (!_isDesktop) {
@@ -551,7 +617,7 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, size: 14, color: Colors.blueAccent),
+                Icon(icon, size: 14, color: theme.colorScheme.primary),
                 const SizedBox(width: 6),
                 Text(
                   label,
@@ -624,7 +690,7 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
                         fontSize: 15,
                         color: DateUtils.isSameDay(
                                 _selectedDay, DateTime.now())
-                            ? Colors.blueAccent
+                            ? Theme.of(context).colorScheme.secondary
                             : Colors.grey[600],
                         fontWeight: FontWeight.w500,
                       ),
@@ -634,7 +700,7 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
                         _todoCollapsed
                             ? Icons.keyboard_arrow_down
                             : Icons.keyboard_arrow_up,
-                        color: Colors.blueAccent,
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                       onPressed: () {
                         setState(() => _todoCollapsed = !_todoCollapsed);
@@ -650,22 +716,27 @@ class _PlannerHomePageState extends State<PlannerHomePage> {
                       label: const Text("시간 순 정렬"),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.calendar_view_week,
-                          color: Colors.blueAccent),
+                      icon: Icon(
+                        Icons.calendar_view_week,
+                        color: Theme.of(context).colorScheme.secondary,
+                      ),
                       tooltip: "투두리스트 관리",
                       onPressed: () async {
-                        await showDialog(
+                        final result = await showDialog<String>(
                           context: context,
                           builder: (context) => WeeklyTodoDialog(
-                            onChanged: () async {
-                              await _todoService.syncAllFromDialog();
-                              await _loadTodosByDate(_selectedDay);
-                            },
+                            onChanged: () => _loadTodosByDate(_selectedDay),
                           ),
                         );
                         await Future.delayed(
                             const Duration(milliseconds: 150));
                         await _loadTodosByDate(_selectedDay);
+                        if (!mounted) return;
+                        if (result == 'added') {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('투두가 추가되었습니다.')),
+                          );
+                        }
                       },
                     ),
                   ],
@@ -802,10 +873,10 @@ Widget _buildMemoPanel({required bool showBody}) {
                 "${_focusedDay.year}. ${_focusedDay.month.toString().padLeft(2, '0')}.",
                 key:
                     ValueKey("${_focusedDay.year}-${_focusedDay.month}"),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: Colors.blueAccent,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ),
             ),

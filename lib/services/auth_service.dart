@@ -32,9 +32,82 @@ class AuthService {
 
   Future<void> deleteAccount() async {
     final user = _auth.currentUser;
-    if (user != null) {
+    if (user == null) return;
+
+    try {
       await user.delete();
+    } on FirebaseAuthException catch (e) {
+      if (e.code != 'requires-recent-login') rethrow;
+
+      await _reauthenticateForSensitiveOperation(user);
+      final refreshed = _auth.currentUser;
+      if (refreshed == null) return;
+      await refreshed.delete();
     }
+  }
+
+  Future<void> _reauthenticateForSensitiveOperation(User user) async {
+    final providerIds = user.providerData.map((p) => p.providerId).toSet();
+    if (providerIds.contains('google.com')) {
+      await _reauthenticateWithGoogle(user);
+      return;
+    }
+    if (providerIds.contains('apple.com')) {
+      await _reauthenticateWithApple(user);
+      return;
+    }
+
+    throw FirebaseAuthException(
+      code: 'requires-recent-login',
+      message: 'This operation requires recent authentication.',
+    );
+  }
+
+  Future<void> _reauthenticateWithGoogle(User user) async {
+    final googleSignIn = GoogleSignIn(
+      scopes: const ['email', 'profile'],
+    );
+
+    var googleUser = await googleSignIn.signInSilently();
+    googleUser ??= await googleSignIn.signIn();
+    if (googleUser == null) {
+      throw FirebaseAuthException(
+        code: 'user-cancelled',
+        message: 'Reauthentication was cancelled.',
+      );
+    }
+
+    final googleAuth = await googleUser.authentication;
+    final credential = GoogleAuthProvider.credential(
+      idToken: googleAuth.idToken,
+      accessToken: googleAuth.accessToken,
+    );
+    await user.reauthenticateWithCredential(credential);
+  }
+
+  Future<void> _reauthenticateWithApple(User user) async {
+    final available = await SignInWithApple.isAvailable();
+    if (!available) {
+      throw FirebaseAuthException(
+        code: 'operation-not-allowed',
+        message: 'Apple Sign In is not available.',
+      );
+    }
+
+    final rawNonce = _generateNonce();
+    final nonce = _sha256OfString(rawNonce);
+
+    final appleCred = await SignInWithApple.getAppleIDCredential(
+      scopes: const [],
+      nonce: nonce,
+    );
+
+    final oauthCred = OAuthProvider('apple.com').credential(
+      idToken: appleCred.identityToken,
+      rawNonce: rawNonce,
+    );
+
+    await user.reauthenticateWithCredential(oauthCred);
   }
 
   /// Google 로그인 → Firebase Auth 연동 (모바일/데스크톱 공용 clientId 사용)

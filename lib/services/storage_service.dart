@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/todo.dart';
 import 'local_scope.dart';
+import 'local_change_notifier.dart';
 
 class StorageService {
   static const String _legacyTodosKey = "todos";
   static const String _legacyMemoKey = "memo";
+  static const String _legacyMemoUpdatedAtKey = "memo_updated_at";
 
   // 📅 오늘 전용 투두 관련 키
   static const String _legacyTodayTodosKey = "today_todos";
@@ -13,6 +15,7 @@ class StorageService {
 
   static String get _todosKey => LocalScope.todosKey;
   static String get _memoKey => LocalScope.memoPadKey;
+  static String get _memoUpdatedAtKey => LocalScope.memoPadUpdatedAtKey;
   static String get _todayTodosKey => LocalScope.todayTodosKey;
   static String get _lastWeeklySyncDateKey => LocalScope.lastWeeklySyncDateKey;
 
@@ -22,6 +25,7 @@ class StorageService {
     final todoList = todos.map((todo) => todo.toJson()).toList();
     await prefs.setString(_todosKey, jsonEncode(todoList));
     await prefs.remove(_legacyTodosKey);
+    LocalChangeNotifier.notify('storage');
   }
 
   // ✅ 일반 할 일 불러오기 (이전 버전 호환)
@@ -48,16 +52,32 @@ class StorageService {
   }
 
   // ✅ 메모 저장
-  static Future<void> saveMemo(String memo) async {
+  static Future<void> saveMemo(String memo, {DateTime? updatedAt}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_memoKey, memo);
     await prefs.remove(_legacyMemoKey);
+
+    final ts = (updatedAt ?? DateTime.now().toUtc()).toIso8601String();
+    await prefs.setString(_memoUpdatedAtKey, ts);
+    await prefs.remove(_legacyMemoUpdatedAtKey);
+    LocalChangeNotifier.notify('storage');
   }
 
   // ✅ 메모 불러오기
   static Future<String?> loadMemo() async {
     final prefs = await SharedPreferences.getInstance();
     return _readWithMigration(prefs, _memoKey, _legacyMemoKey);
+  }
+
+  static Future<DateTime?> loadMemoUpdatedAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final s = await _readWithMigration(
+      prefs,
+      _memoUpdatedAtKey,
+      _legacyMemoUpdatedAtKey,
+    );
+    if (s == null) return null;
+    return DateTime.tryParse(s);
   }
 
   // ─────────────────────────────────────────────
@@ -70,6 +90,7 @@ class StorageService {
     final encoded = jsonEncode(todos.map((t) => t.toJson()).toList());
     await prefs.setString(_todayTodosKey, encoded);
     await prefs.remove(_legacyTodayTodosKey);
+    LocalChangeNotifier.notify('storage');
   }
 
   /// ✅ 오늘자 투두 불러오기 (모델 리스트)

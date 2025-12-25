@@ -16,12 +16,26 @@ import 'services/recurring_service.dart';
 import 'services/theme_service.dart';
 import 'services/local_scope.dart';
 import 'theme/themes.dart';
+import 'theme/theme_presets.dart';
 import 'models/weekly_todo.dart';
 import 'pages/planner_home.dart';
 import 'pages/mobile_home.dart';
+import 'pages/pc_link_page.dart';
 import 'services/todo_service.dart';
 import 'services/auth_provider.dart' as app_auth;
+import 'services/device_link_service.dart';
+import 'services/device_identity_service.dart';
+import 'services/sync_coordinator.dart';
+import 'services/pc_device_revocation_watcher.dart';
 import 'pages/login_page.dart';
+import 'services/ads_debug_settings_provider.dart';
+import 'services/entitlement_provider.dart';
+import 'services/credit_provider.dart';
+import 'services/ui_prefs_provider.dart';
+import 'services/ads/ad_controller.dart';
+import 'services/account_data_reset_service.dart';
+import 'services/iap_purchase_coordinator.dart';
+import 'services/billing_service.dart';
 
 // Firebase
 import 'package:firebase_core/firebase_core.dart';
@@ -33,34 +47,38 @@ import 'package:desktop_multi_window/desktop_multi_window.dart'
     if (dart.library.html) 'desktop_multi_window_stub.dart';
 import 'multi_window.dart';
 
-
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await StartupService.init();
 
-  final bool firebaseSupported =
-      kIsWeb || Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
-  if (firebaseSupported && Firebase.apps.isEmpty) {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  }
-
-  // ðŸšª 1) ì„œë¸Œ ìœˆë„ìš° ì§„ìž… ë¶„ê¸° (settings ë“±)
-  if (args.isNotEmpty && args.first == 'multi_window') {
+  // Secondary window (multi_window) should skip Firebase/Hive init.
+  if (args.isNotEmpty && args.first == "multi_window") {
     Map<String, dynamic> params = {};
     if (args.length > 1) {
       try {
         params = jsonDecode(args[1]) as Map<String, dynamic>;
       } catch (_) {}
     }
-
     runApp(MultiWindowApp(args: params));
-    return; // â— ë©”ì¸ ì´ˆê¸°í™” ì½”ë“œë¡œ ë‚´ë ¤ê°€ì§€ ì•Šê²Œ ì—¬ê¸°ì„œ ëë‚´ê¸°
+    return;
   }
 
-  // ðŸšª 2) ì—¬ê¸°ë¶€í„°ëŠ” "ë©”ì¸ ìœˆë„ìš°" ì „ìš© ì´ˆê¸°í™”
+  final bool firebaseSupported =
+      kIsWeb ||
+      Platform.isAndroid ||
+      Platform.isIOS ||
+      Platform.isMacOS ||
+      Platform.isWindows;
+  if (firebaseSupported && Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
+
   await Hive.initFlutter();
+
+  // Handle purchaseStream as early as possible (mobile only).
+  IapPurchaseCoordinator().start();
 
   if (firebaseSupported && Firebase.apps.isEmpty) {
     await Firebase.initializeApp(
@@ -141,7 +159,6 @@ Future<void> main(List<String> args) async {
     }
   }
 
-
   // âœ… Windows ì¢…ë£Œ ì‹œ ì°½ í¬ê¸°/ìœ„ì¹˜ ì €ìž¥ í›… ì—°ê²°
   if (Platform.isWindows) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -149,17 +166,63 @@ Future<void> main(List<String> args) async {
     });
   }
 
-
   // âœ… ì´ˆê¸° ThemeMode ë¡œë“œ í›„ ì•± ì‹¤í–‰
   final themeService = ThemeService();
   final initialMode = await themeService.loadThemeMode();
   runApp(
-    ChangeNotifierProvider<app_auth.AuthProvider>(
-      create: (_) => app_auth.AuthProvider(enabled: firebaseSupported),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<app_auth.AuthProvider>(
+          create: (_) => app_auth.AuthProvider(enabled: firebaseSupported),
+        ),
+        ChangeNotifierProvider(create: (_) => AdsDebugSettingsProvider()),
+        ChangeNotifierProxyProvider<app_auth.AuthProvider, EntitlementProvider>(
+          create: (_) => EntitlementProvider(),
+          update: (_, auth, ent) {
+            // ignore: discarded_futures
+            ent!.setUser(auth.user);
+            return ent;
+          },
+        ),
+        ChangeNotifierProxyProvider<app_auth.AuthProvider, CreditProvider>(
+          create: (_) => CreditProvider(),
+          update: (_, auth, credit) {
+            // ignore: discarded_futures
+            credit!.setUser(auth.user);
+            return credit;
+          },
+        ),
+        ChangeNotifierProxyProvider<app_auth.AuthProvider, UiPrefsProvider>(
+          create: (_) => UiPrefsProvider(),
+          update: (_, auth, prefs) {
+            // ignore: discarded_futures
+            prefs!.setUser(auth.user);
+            return prefs;
+          },
+        ),
+        ChangeNotifierProxyProvider2<
+          EntitlementProvider,
+          AdsDebugSettingsProvider,
+          AdController
+        >(
+          create: (context) => AdController(
+            entitlement: context.read<EntitlementProvider>(),
+            debugSettings: context.read<AdsDebugSettingsProvider>(),
+          ),
+          update: (_, entitlement, debugSettings, controller) {
+            controller!.updateDeps(
+              entitlement: entitlement,
+              debugSettings: debugSettings,
+            );
+            return controller;
+          },
+        ),
+      ],
       child: MyPlannerApp(
-          themeService: themeService,
-          initialMode: initialMode,
-          supportsAuth: firebaseSupported),
+        themeService: themeService,
+        initialMode: initialMode,
+        supportsAuth: firebaseSupported,
+      ),
     ),
   );
 }
@@ -188,7 +251,6 @@ Future<void> saveWindowSizeDirect() async {
   }
 }
 
-
 class MyPlannerApp extends StatefulWidget {
   final ThemeService themeService;
   final ThemeMode initialMode;
@@ -211,17 +273,24 @@ class _MyPlannerAppState extends State<MyPlannerApp>
   final _todoService = TodoService(); // ê·¸ëƒ¥ ìœ ì§€
   String? _lastLoggedUid;
   bool _lastLoggedAnon = false;
+  final _pcRevocationWatcher = PcDeviceRevocationWatcher();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _registerMultiWindowHandler();
+    if (widget.supportsAuth &&
+        (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+      // ignore: discarded_futures
+      _pcRevocationWatcher.start();
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _pcRevocationWatcher.dispose();
     super.dispose();
   }
 
@@ -238,6 +307,164 @@ class _MyPlannerAppState extends State<MyPlannerApp>
           setState(() => _themeMode = mode);
           await widget.themeService.saveThemeMode(mode);
         }
+        if (call.method == 'uiPrefsChanged') {
+          try {
+            final args =
+                (call.arguments as Map?)?.cast<String, dynamic>() ?? const {};
+            final fontFamily = args['fontFamily']?.toString();
+            final themePresetId = args['themePresetId']?.toString();
+            final textScaleRaw = args['textScale'];
+            final textScale =
+                textScaleRaw is num ? textScaleRaw.toDouble() : null;
+
+            final prefs = context.read<UiPrefsProvider>();
+            if (fontFamily != null) {
+              await prefs.setFontFamily(fontFamily);
+            }
+            if (themePresetId != null) {
+              await prefs.setThemePresetId(themePresetId);
+            }
+            if (textScale != null) {
+              await prefs.setTextScale(textScale);
+            }
+            if (fontFamily == null && themePresetId == null && textScale == null) {
+              await prefs.reloadFromCache();
+            }
+            return {'ok': true};
+          } catch (e) {
+            return {'ok': false, 'message': e.toString()};
+          }
+        }
+        if (call.method == 'pcLinkWithSecret') {
+          try {
+            final existing = FirebaseAuth.instance.currentUser;
+            if (existing != null && !existing.isAnonymous) {
+              return {'ok': false, 'message': 'Already linked.'};
+            }
+            final args =
+                (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
+            final secret = (args['secret'] ?? '').toString().trim();
+            final nickname = (args['nickname'] ?? '').toString().trim();
+            if (secret.isEmpty) {
+              return {'ok': false, 'message': 'Missing secret'};
+            }
+
+            final deviceId = await DeviceIdentityService.getDeviceId();
+            final platform = Platform.isWindows
+                ? 'windows'
+                : Platform.isMacOS
+                ? 'macos'
+                : Platform.isLinux
+                ? 'linux'
+                : 'desktop';
+
+            final token = await DeviceLinkService().linkWithSecret(
+              secret: secret,
+              deviceId: deviceId,
+              platform: platform,
+              appVersion: 'desktop',
+              nickname: nickname.isNotEmpty ? nickname : null,
+            );
+
+            await FirebaseAuth.instance.signInWithCustomToken(token);
+            final signedIn = FirebaseAuth.instance.currentUser;
+            // Ensure providers hydrate immediately even if proxy updates lag.
+            // ignore: discarded_futures
+            context.read<CreditProvider>().setUser(signedIn);
+            // ignore: discarded_futures
+            context.read<EntitlementProvider>().setUser(signedIn);
+            // ignore: discarded_futures
+            context.read<UiPrefsProvider>().setUser(signedIn);
+            await SyncCoordinator().syncAll();
+            return {'ok': true};
+          } catch (e) {
+            return {'ok': false, 'message': e.toString()};
+          }
+        }
+        if (call.method == 'pcLinkGetStatus') {
+          final u = FirebaseAuth.instance.currentUser;
+          int? creditBalance;
+          int? proDays;
+          int? premiumDays;
+          bool? creditHydrated;
+          bool? entitlementHydrated;
+          try {
+            final credit = context.read<CreditProvider>();
+            creditBalance = credit.balance;
+            creditHydrated = credit.hydrated;
+          } catch (_) {}
+          try {
+            final ent = context.read<EntitlementProvider>();
+            final b = ent.balanceAt(DateTime.now());
+            proDays = b.proDays;
+            premiumDays = b.premiumDays;
+            entitlementHydrated = ent.hydrated;
+          } catch (_) {}
+          return {
+            'ok': true,
+            'uid': u?.uid,
+            'isAnonymous': u?.isAnonymous ?? false,
+            'email': u?.email,
+            'displayName': u?.displayName,
+            'creditBalance': creditBalance,
+            'creditHydrated': creditHydrated,
+            'proDays': proDays,
+            'premiumDays': premiumDays,
+            'entitlementHydrated': entitlementHydrated,
+          };
+        }
+        if (call.method == 'pcLinkSignOut') {
+          try {
+            final user = FirebaseAuth.instance.currentUser;
+            if (user != null && !user.isAnonymous) {
+              final deviceId = await DeviceIdentityService.getDeviceId();
+              await DeviceLinkService().revokeDevice(deviceId);
+            }
+            await FirebaseAuth.instance.signOut();
+            return {'ok': true};
+          } catch (e) {
+            return {'ok': false, 'message': e.toString()};
+          }
+        }
+        if (call.method == 'resetAllData') {
+          try {
+            final args =
+                (call.arguments as Map?)?.cast<String, dynamic>() ?? const {};
+            final includeRemote = args['includeRemote'] != false;
+            await AccountDataResetService.resetAll(
+              includeRemote: includeRemote,
+            );
+            return {'ok': true};
+          } catch (e) {
+            return {'ok': false, 'message': e.toString()};
+          }
+        }
+        if (call.method == 'billingRedeemCoupon') {
+          try {
+            final args =
+                (call.arguments as Map?)?.cast<String, dynamic>() ?? const {};
+            final code = (args['code'] ?? '').toString().trim();
+            if (code.isEmpty) {
+              return {'ok': false, 'message': 'Missing code'};
+            }
+            final resp = await BillingService().redeemCoupon(code: code);
+            // ignore: discarded_futures
+            context.read<CreditProvider>().refresh();
+            // ignore: discarded_futures
+            context.read<EntitlementProvider>().refresh();
+            return {'ok': true, ...resp};
+          } catch (e) {
+            return {'ok': false, 'message': e.toString()};
+          }
+        }
+        if (call.method == 'billingDebugResetCouponRedemptionNonce') {
+          try {
+            final resp = await BillingService().debugResetCouponRedemptionNonce();
+            return {'ok': true, ...resp};
+          } catch (e) {
+            return {'ok': false, 'message': e.toString()};
+          }
+        }
         return null;
       });
     }
@@ -245,6 +472,10 @@ class _MyPlannerAppState extends State<MyPlannerApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
+    if (state == AppLifecycleState.resumed) {
+      // ignore: discarded_futures
+      SyncCoordinator().syncAll();
+    }
     if (state == AppLifecycleState.detached ||
         state == AppLifecycleState.inactive) {
       await _saveWindowSize();
@@ -273,7 +504,9 @@ class _MyPlannerAppState extends State<MyPlannerApp>
     _lastLoggedAnon = isAnon;
 
     print("AUTH uid = ${FirebaseAuth.instance.currentUser?.uid}");
-    print("AUTH isAnonymous = ${FirebaseAuth.instance.currentUser?.isAnonymous}");
+    print(
+      "AUTH isAnonymous = ${FirebaseAuth.instance.currentUser?.isAnonymous}",
+    );
   }
 
   Future<void> _handleThemeChange(String mode) async {
@@ -295,12 +528,34 @@ class _MyPlannerAppState extends State<MyPlannerApp>
   @override
   Widget build(BuildContext context) {
     final isMobile = Platform.isIOS || Platform.isAndroid;
+    final isDesktop =
+        Platform.isWindows || Platform.isLinux || Platform.isMacOS;
     final supportsAuth = widget.supportsAuth;
+
+    final entitlement = context.watch<EntitlementProvider>();
+    final prefs = context.watch<UiPrefsProvider>();
+    final now = DateTime.now();
+    final canUsePro = entitlement.hydrated && entitlement.balanceAt(now).isAdFree;
+    final fontFamily = canUsePro && prefs.fontFamily.trim().isNotEmpty
+        ? prefs.fontFamily.trim()
+        : null;
+    final preset =
+        canUsePro ? ThemePresets.byId(prefs.themePresetId) : ThemePresets.defaultPreset;
+    final textScale = canUsePro ? prefs.textScale : 1.0;
     return MaterialApp(
       title: 'Dayscript',
-      theme: buildLightTheme(),
-      darkTheme: buildDarkTheme(),
+      theme: buildLightTheme(fontFamily: fontFamily, preset: preset),
+      darkTheme: buildDarkTheme(fontFamily: fontFamily, preset: preset),
       themeMode: _themeMode,
+      builder: (context, child) {
+        final media = MediaQuery.of(context);
+        return MediaQuery(
+          data: media.copyWith(
+            textScaler: TextScaler.linear(textScale),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       routes: supportsAuth ? {'/login': (_) => const LoginPage()} : const {},
       home: Consumer<app_auth.AuthProvider>(
         builder: (context, auth, _) {
@@ -309,6 +564,12 @@ class _MyPlannerAppState extends State<MyPlannerApp>
             return PlannerHomePage(onThemeChange: _handleThemeChange);
           }
           if (!auth.isAuthenticated) {
+            if (isDesktop) {
+              return PcLinkPage(
+                currentMode: _themeMode,
+                onThemeChange: _handleThemeChange,
+              );
+            }
             return const LoginPage();
           }
           _logAuthState(auth.user);

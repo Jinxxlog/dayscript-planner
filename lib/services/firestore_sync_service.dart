@@ -4,6 +4,8 @@ import '../models/todo.dart';
 import '../models/weekly_todo.dart';
 import '../models/calendar_memo.dart';
 import '../models/recurring_event.dart';
+import '../models/daily_todo_state.dart';
+import '../models/memo_pad_doc.dart';
 import '../services/holiday_service.dart';
 import 'merge_policy.dart';
 
@@ -29,6 +31,40 @@ class FirestoreSyncService {
     if (!_initialized || _uid == null) {
       throw Exception('FirestoreSyncService not initialized. Call init(uid).');
     }
+  }
+
+  DocumentReference<Map<String, dynamic>> _userDoc() {
+    _ensure();
+    return _db.collection('users').doc(_uid);
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>> _safeGetUserDoc() async {
+    final ref = _userDoc();
+    try {
+      return await ref.get(const GetOptions(source: Source.server));
+    } catch (_) {
+      return await ref.get(const GetOptions(source: Source.cache));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Account reset marker (prevents "resurrection" from another device)
+  // ---------------------------------------------------------------------------
+  Future<void> markResetNow() async {
+    await _userDoc().set(
+      {'resetAt': FieldValue.serverTimestamp()},
+      SetOptions(merge: true),
+    );
+  }
+
+  Future<DateTime?> fetchResetAt() async {
+    final snap = await _safeGetUserDoc();
+    final data = snap.data();
+    if (data == null) return null;
+    final v = data['resetAt'];
+    if (v is Timestamp) return v.toDate();
+    if (v is DateTime) return v;
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -66,11 +102,34 @@ class FirestoreSyncService {
     return _db.collection('users').doc(_uid).collection(name);
   }
 
+  Future<QuerySnapshot<Map<String, dynamic>>> _safeGetCol(
+    String name,
+  ) async {
+    final col = _col(name);
+    try {
+      return await col.get(const GetOptions(source: Source.server));
+    } catch (_) {
+      return await col.get(const GetOptions(source: Source.cache));
+    }
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>> _safeGetDoc(
+    String colName,
+    String docId,
+  ) async {
+    final ref = _col(colName).doc(docId);
+    try {
+      return await ref.get(const GetOptions(source: Source.server));
+    } catch (_) {
+      return await ref.get(const GetOptions(source: Source.cache));
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Todos
   // ---------------------------------------------------------------------------
   Future<List<Todo>> fetchTodos() async {
-    final snap = await _col('todos').get();
+    final snap = await _safeGetCol('todos');
     return snap.docs
         .map((d) => Todo.fromJson(_decodeDates(d.data())))
         .toList();
@@ -89,7 +148,7 @@ class FirestoreSyncService {
   // WeeklyTodos
   // ---------------------------------------------------------------------------
   Future<List<WeeklyTodo>> fetchWeeklyTodos() async {
-    final snap = await _col('weeklyTodos').get();
+    final snap = await _safeGetCol('weeklyTodos');
     return snap.docs
         .map((d) => WeeklyTodo.fromJson(_decodeDates(d.data())))
         .toList();
@@ -108,7 +167,7 @@ class FirestoreSyncService {
   // Memos
   // ---------------------------------------------------------------------------
   Future<List<CalendarMemo>> fetchMemos() async {
-    final snap = await _col('memos').get();
+    final snap = await _safeGetCol('memos');
     return snap.docs
         .map((d) => CalendarMemo.fromJson(_decodeDates(d.data())))
         .toList();
@@ -127,7 +186,7 @@ class FirestoreSyncService {
   // Holidays (custom)
   // ---------------------------------------------------------------------------
   Future<List<CustomHoliday>> fetchHolidays() async {
-    final snap = await _col('holidays').get();
+    final snap = await _safeGetCol('holidays');
     return snap.docs
         .map((d) => CustomHoliday.fromJson(_decodeDates(d.data())))
         .toList();
@@ -155,7 +214,7 @@ class FirestoreSyncService {
   }
 
   Future<List<RecurringEvent>> fetchRecurring() async {
-    final snap = await _col('recurring').get();
+    final snap = await _safeGetCol('recurring');
     return snap.docs
         .map((d) => RecurringEvent.fromJson(_decodeDates(d.data())))
         .toList();
@@ -168,6 +227,83 @@ class FirestoreSyncService {
       batch.set(doc, _encodeDates(e.toJson()), SetOptions(merge: true));
     }
     await batch.commit();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Daily Todo States (dateKey -> ordered list)
+  // ---------------------------------------------------------------------------
+  Future<List<DailyTodoState>> fetchDailyTodoStates() async {
+    final snap = await _safeGetCol('dailyTodoStates');
+    return snap.docs
+        .map((d) => DailyTodoState.fromJson(_decodeDates(d.data())))
+        .toList();
+  }
+
+  Future<void> upsertDailyTodoStates(List<DailyTodoState> states) async {
+    final batch = _db.batch();
+    for (final s in states) {
+      final doc = _col('dailyTodoStates').doc(s.dateKey);
+      batch.set(doc, _encodeDates(s.toJson()), SetOptions(merge: true));
+    }
+    await batch.commit();
+  }
+
+  // ---------------------------------------------------------------------------
+  // MemoPad (single doc)
+  // ---------------------------------------------------------------------------
+  Future<MemoPadDoc?> fetchMemoPad() async {
+    final snap = await _safeGetDoc('memoPad', 'main');
+    if (!snap.exists) return null;
+    return MemoPadDoc.fromJson(_decodeDates(snap.data()!));
+  }
+
+  Future<void> upsertMemoPad(MemoPadDoc doc) async {
+    await _col('memoPad')
+        .doc(doc.id)
+        .set(_encodeDates(doc.toJson()), SetOptions(merge: true));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Delete all user data (dangerous)
+  // ---------------------------------------------------------------------------
+  Future<void> deleteAllUserData() async {
+    _ensure();
+    const collections = <String>[
+      'todos',
+      'weeklyTodos',
+      'memos',
+      'holidays',
+      'recurring',
+      'dailyTodoStates',
+      'memoPad',
+    ];
+
+    for (final name in collections) {
+      await _deleteCollection(name);
+    }
+  }
+
+  Future<void> _deleteCollection(String name) async {
+    while (true) {
+      QuerySnapshot<Map<String, dynamic>> snap;
+      try {
+        snap = await _col(name).limit(450).get(
+              const GetOptions(source: Source.server),
+            );
+      } catch (_) {
+        snap = await _col(name).limit(450).get(
+              const GetOptions(source: Source.cache),
+            );
+      }
+
+      if (snap.docs.isEmpty) return;
+
+      final batch = _db.batch();
+      for (final doc in snap.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+    }
   }
 
   // ---------------------------------------------------------------------------

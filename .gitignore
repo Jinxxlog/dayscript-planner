@@ -25,3 +25,8 @@ coverage/
 
 # Logs
 *.log
+
+# Android signing (DO NOT COMMIT)
+android/key.properties
+android/*.jks
+android/*.keystore

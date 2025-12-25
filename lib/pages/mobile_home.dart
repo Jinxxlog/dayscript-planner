@@ -1,4 +1,5 @@
 import 'dart:io' if (dart.library.html) 'platform_stub.dart' show Platform;
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart'; // for isSameDay helper
 import '../widgets/calendar_widget.dart';
@@ -9,6 +10,8 @@ import '../models/todo.dart';
 import '../widgets/weekly_todo_dialog.dart';
 import '../multi_window.dart' show SettingsHomePage;
 import '../services/sync_coordinator.dart';
+import '../services/local_change_notifier.dart';
+import '../widgets/ads/ad_floating_banner.dart';
 
 class MobileHomePage extends StatefulWidget {
   final ThemeMode themeMode;
@@ -34,6 +37,10 @@ class _MobileHomePageState extends State<MobileHomePage> {
   void initState() {
     super.initState();
     _sync.startNetworkListener();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ignore: discarded_futures
+      _sync.syncAll();
+    });
   }
 
   @override
@@ -51,6 +58,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final showAd = _currentIndex != 3;
     final pages = [
       _CalendarTab(
         focusedDay: _focusedDay,
@@ -81,9 +89,16 @@ class _MobileHomePageState extends State<MobileHomePage> {
         behavior: HitTestBehavior.translucent,
         onTap: () => FocusScope.of(context).unfocus(),
         child: SafeArea(
-          child: IndexedStack(
-            index: _currentIndex,
-            children: pages,
+          child: Column(
+            children: [
+              Expanded(
+                child: IndexedStack(
+                  index: _currentIndex,
+                  children: pages,
+                ),
+              ),
+              if (showAd) const AdFloatingBanner(),
+            ],
           ),
         ),
       ),
@@ -165,6 +180,7 @@ class _CalendarTab extends StatelessWidget {
             useBottomSheetForMemo: false,
           ),
         ),
+        const Divider(height: 1),
       ],
     );
   }
@@ -187,12 +203,25 @@ class _TodoTabState extends State<_TodoTab> {
   final _todoService = TodoService();
   List<Todo> _todos = [];
   late DateTime _weekStart;
+  StreamSubscription<String>? _localSub;
 
   @override
   void initState() {
     super.initState();
     _weekStart = _getWeekStart(widget.selectedDay);
     _loadTodos(widget.selectedDay);
+    _localSub ??= LocalChangeNotifier.stream.listen((area) async {
+      if (!mounted) return;
+      if (area == 'todos') {
+        await _loadTodos(widget.selectedDay);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _localSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -210,7 +239,8 @@ class _TodoTabState extends State<_TodoTab> {
   }
 
   Future<void> _loadTodos(DateTime day) async {
-    final list = await _todoService.loadDailyState(day);
+    final list = await _todoService.loadDailyTodosMerged(day);
+    if (!mounted) return;
     setState(() => _todos = list);
   }
 
@@ -254,16 +284,19 @@ class _TodoTabState extends State<_TodoTab> {
   }
 
   Future<void> _openWeeklyManage() async {
-    await showDialog(
+    final result = await showDialog<String>(
       context: context,
       builder: (context) => WeeklyTodoDialog(
-        onChanged: () async {
-          await _todoService.syncAllFromDialog();
-          await _loadTodos(widget.selectedDay);
-        },
+        onChanged: () => _loadTodos(widget.selectedDay),
       ),
     );
     await _loadTodos(widget.selectedDay);
+    if (!mounted) return;
+    if (result == 'added') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('투두가 추가되었습니다.')),
+      );
+    }
   }
 
   void _changeWeek(int delta) {
@@ -448,9 +481,23 @@ class _MemoTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: MemoPad(),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(12, 12, 12, 6),
+          child: Text(
+            'Memo Pad.',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: MemoPad(showInlineTitle: false),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/calendar_memo.dart';
 import 'local_scope.dart';
+import 'local_change_notifier.dart';
 
 /// SharedPreferences 기반 메모 저장/불러오기 헬퍼.
 class CalendarMemoStore {
@@ -42,6 +43,7 @@ class CalendarMemoStore {
     });
     await prefs.setString(_prefsKey, jsonEncode(jsonMap));
     await prefs.remove(_legacyPrefsKey);
+    LocalChangeNotifier.notify('memos');
   }
 
   /// 리스트를 날짜별로 묶어 저장.

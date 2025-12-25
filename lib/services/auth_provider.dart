@@ -59,6 +59,17 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> deleteAccount() async {
     _ensureEnabled();
-    await _authService!.deleteAccount();
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      await _authService!.deleteAccount();
+    } catch (e) {
+      _error = e;
+      rethrow;
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
   }
 }

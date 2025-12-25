@@ -1,14 +1,18 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/material.dart';
 import '../models/recurring_event.dart';
+import 'local_scope.dart';
+import 'local_change_notifier.dart';
 
 /// 반복 일정 관리 (v2)
 class RecurringService {
-  static const String boxName = 'recurring_events';
+  static const String _legacyBoxName = 'recurring_events';
+  static String get boxName => LocalScope.recurringEventsBox;
   static final RecurringService _instance = RecurringService._internal();
   factory RecurringService() => _instance;
   RecurringService._internal();
 
+  static final Map<String, Box<RecurringEvent>> _cache = {};
   Box<RecurringEvent>? _box;
 
   /// Hive 초기화
@@ -19,7 +23,95 @@ class RecurringService {
       Hive.registerAdapter(RecurringEventAdapter());
     }
 
-    _box ??= await Hive.openBox<RecurringEvent>(boxName);
+    final targetName = boxName;
+    if (_box != null && _box!.name == targetName && _box!.isOpen) {
+      await _ensureStableIds();
+      return;
+    }
+
+    final cached = _cache[targetName];
+    if (cached != null && cached.isOpen) {
+      _box = cached;
+      await _ensureStableIds();
+      return;
+    }
+
+    final box = Hive.isBoxOpen(targetName)
+        ? Hive.box<RecurringEvent>(targetName)
+        : await Hive.openBox<RecurringEvent>(targetName);
+    _cache[targetName] = box;
+    _box = box;
+    await _migrateLegacyIfNeeded(targetName);
+    await _ensureStableIds();
+  }
+
+  Future<void> _migrateLegacyIfNeeded(String targetName) async {
+    if (!await Hive.boxExists(_legacyBoxName)) return;
+
+    final target = Hive.isBoxOpen(targetName)
+        ? Hive.box<RecurringEvent>(targetName)
+        : await Hive.openBox<RecurringEvent>(targetName);
+    if (target.isNotEmpty) return;
+
+    final legacy = await Hive.openBox<RecurringEvent>(_legacyBoxName);
+    if (legacy.isEmpty) return;
+
+    for (final e in legacy.values) {
+      await target.add(e);
+    }
+  }
+
+  String _stableIdFor(RecurringEvent e) {
+    if (e.id != null && e.id!.trim().isNotEmpty) return e.id!.trim();
+    final ym = e.yearMonth ?? 0;
+    final yd = e.yearDay ?? 0;
+    final rule = e.rule ?? '';
+    return '${e.title}__${e.cycleType.name}__${ym}_${yd}__${rule.isEmpty ? e.startDate.toIso8601String() : rule}';
+  }
+
+  Future<void> _ensureStableIds() async {
+    final box = _ensureBox;
+    for (final key in box.keys) {
+      final current = box.get(key);
+      if (current == null) continue;
+      if (current.id != null && current.id!.trim().isNotEmpty) continue;
+      await box.put(key, current.copyWith(id: _stableIdFor(current)));
+    }
+  }
+
+  dynamic _findKeyById(Box<RecurringEvent> box, String id) {
+    for (final key in box.keys) {
+      final e = box.get(key);
+      if (e != null && e.id == id) return key;
+    }
+    return null;
+  }
+
+  dynamic _findKeyByLegacyIdentity(
+    Box<RecurringEvent> box,
+    RecurringEvent event,
+  ) {
+    return box.keys.firstWhere(
+      (key) {
+        final e = box.get(key);
+        if (e == null) return false;
+
+        if (event.rule != null && event.rule!.isNotEmpty) {
+          return e.title == event.title && e.rule == event.rule;
+        }
+
+        if (event.cycleType == RecurringCycleType.yearly) {
+          return e.title == event.title &&
+              e.cycleType == event.cycleType &&
+              e.yearMonth == event.yearMonth &&
+              e.yearDay == event.yearDay &&
+              e.isLunar == event.isLunar;
+        }
+
+        return false;
+      },
+      orElse: () => null,
+    );
   }
 
   Box<RecurringEvent> get _ensureBox {
@@ -33,17 +125,27 @@ class RecurringService {
   // CRUD
   // =============================================================================
 
-  /// 모든 반복 일정 조회 (deleted 제외)
-  List<RecurringEvent> getEvents() {
+  /// 모든 반복 일정 조회
+  List<RecurringEvent> getAllEvents({bool includeDeleted = false}) {
     final box = _ensureBox;
-    return box.values.where((e) => e.deleted != true).toList();
+    return includeDeleted
+        ? box.values.toList()
+        : box.values.where((e) => e.deleted != true).toList();
   }
+
+  /// 모든 반복 일정 조회 (deleted 제외)
+  List<RecurringEvent> getEvents() => getAllEvents(includeDeleted: false);
 
   /// 반복 일정 추가/업서트
   Future<void> addEvent(RecurringEvent event) async {
     final box = _ensureBox;
 
-    final existingKey = box.keys.firstWhere(
+    final id = event.id?.trim();
+    dynamic existingKey;
+    if (id != null && id.isNotEmpty) {
+      existingKey = _findKeyById(box, id);
+    }
+    existingKey ??= box.keys.firstWhere(
       (key) {
         final e = box.get(key);
         if (e == null) return false;
@@ -67,7 +169,11 @@ class RecurringService {
       orElse: () => null,
     );
 
+    final existing = existingKey != null ? box.get(existingKey) : null;
     final payload = event.copyWith(
+      id: (existing?.id != null && existing!.id!.trim().isNotEmpty)
+          ? existing.id!.trim()
+          : _stableIdFor(event),
       updatedAt: DateTime.now(),
       deleted: false,
     );
@@ -77,6 +183,43 @@ class RecurringService {
     } else {
       await box.add(payload);
     }
+    LocalChangeNotifier.notify('recurring');
+  }
+
+  Future<void> removeEventById(String id) async {
+    final box = _ensureBox;
+    final key = _findKeyById(box, id);
+    if (key == null) return;
+    final current = box.get(key);
+    if (current == null) return;
+    await box.put(
+      key,
+      current.copyWith(
+        deleted: true,
+        updatedAt: DateTime.now(),
+      ),
+    );
+    LocalChangeNotifier.notify('recurring');
+  }
+
+  Future<void> removeEventByEvent(RecurringEvent event) async {
+    final id = event.id?.trim();
+    if (id != null && id.isNotEmpty) {
+      return removeEventById(id);
+    }
+    final box = _ensureBox;
+    final key = _findKeyByLegacyIdentity(box, event);
+    if (key == null) return;
+    final current = box.get(key);
+    if (current == null) return;
+    await box.put(
+      key,
+      current.copyWith(
+        deleted: true,
+        updatedAt: DateTime.now(),
+      ),
+    );
+    LocalChangeNotifier.notify('recurring');
   }
 
   /// 인덱스로 제거 (소프트 삭제)
@@ -92,8 +235,10 @@ class RecurringService {
             updatedAt: DateTime.now(),
           ),
         );
+        LocalChangeNotifier.notify('recurring');
       } else {
         await box.deleteAt(index);
+        LocalChangeNotifier.notify('recurring');
       }
     }
   }
@@ -101,6 +246,7 @@ class RecurringService {
   /// 제목으로 제거 (소프트 삭제)
   Future<void> removeEventByTitle(String title) async {
     final box = _ensureBox;
+    bool changed = false;
     for (var key in box.keys) {
       final e = box.get(key);
       if (e != null && e.title == title) {
@@ -111,8 +257,10 @@ class RecurringService {
             updatedAt: DateTime.now(),
           ),
         );
+        changed = true;
       }
     }
+    if (changed) LocalChangeNotifier.notify('recurring');
   }
 
   /// 월/일/음력 조건으로 제거 (소프트 삭제)
@@ -123,6 +271,7 @@ class RecurringService {
     bool isLunar = false,
   }) async {
     final box = _ensureBox;
+    bool changed = false;
 
     for (var key in box.keys) {
       final e = box.get(key);
@@ -139,13 +288,16 @@ class RecurringService {
             updatedAt: DateTime.now(),
           ),
         );
+        changed = true;
       }
     }
+    if (changed) LocalChangeNotifier.notify('recurring');
   }
 
   Future<void> clearAll() async {
     final box = _ensureBox;
     await box.clear();
+    LocalChangeNotifier.notify('recurring');
   }
 
   /// 특정 날짜에 매칭되는 반복 일정 반환 (deleted 제외)
@@ -212,6 +364,7 @@ class RecurringService {
   // 편의: rule 구성
   // =============================================================================
   Future<void> addEventWithInfo({
+    String? id,
     required String title,
     required RecurringCycleType cycleType,
     DateTime? startDate,
@@ -251,6 +404,7 @@ class RecurringService {
           color: color ?? Colors.blueAccent,
           cycleType: RecurringCycleType.monthly,
           yearDay: effectiveDays.first,
+          id: id,
           note: note,
         );
         await addEvent(e);
@@ -270,6 +424,7 @@ class RecurringService {
           yearMonth: validMonth,
           yearDay: validDay2,
           isLunar: isLunar,
+          id: id,
           note: note,
         );
         await addEvent(e);
@@ -291,6 +446,7 @@ class RecurringService {
           startDate: startDate ?? DateTime.now(),
           color: color ?? Colors.greenAccent,
           cycleType: RecurringCycleType.weekly,
+          id: id,
           note: note,
         );
         await addEvent(e);
@@ -335,7 +491,7 @@ class RecurringEventAdapter extends TypeAdapter<RecurringEvent> {
       updatedAt = DateTime.tryParse(updatedRaw ?? '');
       deleted = reader.readBool();
     } catch (_) {
-      updatedAt = updatedAt ?? DateTime.now();
+      updatedAt = updatedAt ?? startDate;
     }
 
     return RecurringEvent(
@@ -349,7 +505,7 @@ class RecurringEventAdapter extends TypeAdapter<RecurringEvent> {
       isLunar: isLunar,
       id: (id?.isEmpty ?? true) ? null : id,
       note: (note?.isEmpty ?? true) ? null : note,
-      updatedAt: updatedAt ?? DateTime.now(),
+      updatedAt: updatedAt ?? startDate,
       deleted: deleted,
     );
   }

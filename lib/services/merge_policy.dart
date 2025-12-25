@@ -3,6 +3,8 @@ import '../models/weekly_todo.dart';
 import '../models/calendar_memo.dart';
 import '../services/holiday_service.dart';
 import '../models/recurring_event.dart';
+import '../models/daily_todo_state.dart';
+import '../models/memo_pad_doc.dart';
 
 /// 병합 결과: 최종 merged, 로컬이 서버에 업로드해야 할 항목, 서버에서 로컬에 반영해야 할 항목.
 class MergeResult<T> {
@@ -66,7 +68,6 @@ MergeResult<T> _mergeGeneric<T>({
       } else {
         // 동시간 → 서버 우선
         merged.add(r);
-        if (l != r) toApplyLocal.add(r);
       }
     } else if (r != null) {
       merged.add(r);
@@ -157,5 +158,31 @@ MergeResult<RecurringEvent> mergeRecurring({
     id: _recurringKey,
     updatedAt: (e) => e.updatedAt,
     deleted: (e) => e.deleted,
+  );
+}
+
+MergeResult<DailyTodoState> mergeDailyTodoStates({
+  required List<DailyTodoState> local,
+  required List<DailyTodoState> remote,
+}) {
+  return _mergeGeneric<DailyTodoState>(
+    local: local,
+    remote: remote,
+    id: (s) => s.dateKey,
+    updatedAt: (s) => s.updatedAt,
+    deleted: (s) => s.deleted,
+  );
+}
+
+MergeResult<MemoPadDoc> mergeMemoPad({
+  required List<MemoPadDoc> local,
+  required List<MemoPadDoc> remote,
+}) {
+  return _mergeGeneric<MemoPadDoc>(
+    local: local,
+    remote: remote,
+    id: (m) => m.id,
+    updatedAt: (m) => m.updatedAt,
+    deleted: (m) => m.deleted,
   );
 }

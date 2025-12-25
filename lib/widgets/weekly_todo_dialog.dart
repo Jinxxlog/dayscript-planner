@@ -71,12 +71,12 @@ class _WeeklyTodoDialogState extends State<WeeklyTodoDialog> {
     );
 
     // ✅ 추가된 주간투두 → 오늘 날짜와 메인 투두에 즉시 반영
-    await _todoService.syncSpecificDays(_selectedDays);
 
-    _clearInput();
     await _loadTodos();
     widget.onChanged(); // 메인 화면 리프레시
-    }
+    if (!mounted) return;
+    Navigator.pop(context, 'added');
+  }
 
     String _colorToHex(Color color) =>
       '#${color.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
@@ -456,19 +456,14 @@ class _WeeklyTodoDialogState extends State<WeeklyTodoDialog> {
             Icon(FeatherIcons.clock), // ⏰ 시간 모드
           ],
         ),
-        const SizedBox(width: 12),
-        Text(
-          _isTextMode ? '텍스트 모드' : '시간 모드',
-          style: TextStyle(
-            color: _isTextMode ? Colors.orangeAccent : Colors.blueAccent,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 8),
 
         // 🔹 모드별 UI 표시
         if (_isTextMode)
-          Row(
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
             children: [
             DropdownButton<String>(
               // ✅ value가 리스트 안에 없으면 기본값으로 대체
@@ -494,9 +489,14 @@ class _WeeklyTodoDialogState extends State<WeeklyTodoDialog> {
                   ),
                 ),
             ],
+              ),
+            ),
           )
         else
-          Row(
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
             children: [
               IconButton(
                 icon: Icon(
@@ -545,6 +545,8 @@ class _WeeklyTodoDialogState extends State<WeeklyTodoDialog> {
               else
                 const Text("아무때나", style: TextStyle(color: Colors.grey)),
             ],
+              ),
+            ),
           ),
       ],
     );
@@ -741,8 +743,6 @@ class _WeeklyTodoDialogState extends State<WeeklyTodoDialog> {
                   await _todoService.saveTodos(_weeklyTodos, fromMain: false);
 
                   // ✅ 색상 변경 반영 (모든 날짜)
-                  await _todoService.refreshColorsFromDialog(); // 🔹 추가 (전날~미래 전부)
-                  await _todoService.syncAllFromDialog();       // 🔹 미래 날짜에도 적용
 
                   setState(() {});
                   widget.onChanged();

@@ -37,10 +37,13 @@ class _TodoListState extends State<TodoList> {
     final theme = Theme.of(context);
 
     if (widget.todos.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           "오늘의 투두가 없습니다.",
-          style: TextStyle(fontSize: 15, color: Colors.grey),
+          style: TextStyle(
+            fontSize: 15,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       );
     }
@@ -145,7 +148,7 @@ class _AnimatedTodoTileState extends State<_AnimatedTodoTile> {
                         color: _parseColor(widget.color),
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: Colors.grey.withOpacity(0.4),
+                          color: colorScheme.outlineVariant.withOpacity(0.7),
                           width: 1,
                         ),
                       ),
@@ -177,7 +180,7 @@ class _AnimatedTodoTileState extends State<_AnimatedTodoTile> {
                               ? TextDecoration.lineThrough
                               : TextDecoration.none,
                           color: widget.isDone
-                              ? colorScheme.primary
+                              ? colorScheme.secondary
                               : colorScheme.onSurface,
                         ),
                       ),
@@ -201,7 +204,7 @@ class _AnimatedTodoTileState extends State<_AnimatedTodoTile> {
 
   Color _parseColor(String? raw) {
     // 기본색(파싱 실패 시)
-    const fallback = Color(0xFF64B5F6);
+    final fallback = widget.theme.colorScheme.tertiary;
     if (raw == null) return fallback;
 
     // 1) 문자열 정리

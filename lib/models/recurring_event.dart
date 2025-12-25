@@ -71,10 +71,13 @@ class RecurringEvent {
       orElse: () => RecurringCycleType.none,
     );
 
+    final startDate = _parseDT(json["startDate"]) ?? DateTime.now();
+    final updatedAt = _parseDT(json["updatedAt"]) ?? startDate;
+
     return RecurringEvent(
       title: json["title"] as String,
       rule: json["rule"] as String?,
-      startDate: _parseDT(json["startDate"]) ?? DateTime.now(),
+      startDate: startDate,
       color: Color(json["color"] as int),
       cycleType: cycle,
       yearMonth: json["yearMonth"] as int?,
@@ -82,7 +85,7 @@ class RecurringEvent {
       isLunar: (json["isLunar"] as bool?) ?? false,
       id: json["id"] as String?,
       note: json["note"] as String?,
-      updatedAt: _parseDT(json["updatedAt"]) ?? DateTime.now(),
+      updatedAt: updatedAt,
       deleted: json["deleted"] == true,
     );
   }

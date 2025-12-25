@@ -1,5 +1,7 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/material.dart';
+import 'local_scope.dart';
+import 'local_change_notifier.dart';
 
 /// ✅ 사용자 정의 휴일 모델
 class CustomHoliday {
@@ -51,8 +53,9 @@ class CustomHoliday {
       );
 }
 
-/// Hive Box 이름
-const String _holidayBoxName = 'customHolidays';
+/// Legacy (unscoped) box names for migration.
+const String _legacyHolidayBoxName = 'customHolidays';
+const String _legacyHolidayTitleBoxName = 'custom_holidays';
 
 /// ✅ HolidayService (Singleton)
 class HolidayService {
@@ -60,15 +63,73 @@ class HolidayService {
   factory HolidayService() => _instance;
   HolidayService._internal();
 
-  Box? _box;
+  static final Map<String, Box<Map>> _cache = {};
+  Box<Map>? _box;
 
   /// ✅ Hive 초기화
   Future<void> init() async {
     await Hive.initFlutter();
-    _box ??= await Hive.openBox<Map>(_holidayBoxName);
+    final targetName = LocalScope.customHolidaysBox;
+    if (_box != null && _box!.name == targetName && _box!.isOpen) return;
+
+    final cached = _cache[targetName];
+    if (cached != null && cached.isOpen) {
+      _box = cached;
+      return;
+    }
+
+    final box = Hive.isBoxOpen(targetName)
+        ? Hive.box<Map>(targetName)
+        : await Hive.openBox<Map>(targetName);
+    _cache[targetName] = box;
+    _box = box;
+    await _migrateLegacyIfNeeded(targetName);
   }
 
-  Box get _ensureBox {
+  Future<void> _migrateLegacyIfNeeded(String targetName) async {
+    final target = Hive.isBoxOpen(targetName)
+        ? Hive.box<Map>(targetName)
+        : await Hive.openBox<Map>(targetName);
+    if (target.isNotEmpty) return;
+
+    // 1) legacy structured box (Map payloads)
+    if (await Hive.boxExists(_legacyHolidayBoxName)) {
+      final legacy = await Hive.openBox<Map>(_legacyHolidayBoxName);
+      for (final entry in legacy.toMap().entries) {
+        final v = entry.value;
+        if (v is Map) {
+          await target.put(entry.key, Map<String, dynamic>.from(v));
+        }
+      }
+      if (target.isNotEmpty) return;
+    }
+
+    // 2) very old legacy (dateKey -> title string)
+    if (await Hive.boxExists(_legacyHolidayTitleBoxName)) {
+      final legacy = await Hive.openBox(_legacyHolidayTitleBoxName);
+      for (final entry in legacy.toMap().entries) {
+        final dateKey = entry.key?.toString();
+        final title = entry.value?.toString();
+        if (dateKey == null || title == null || title.isEmpty) continue;
+
+        final date = DateTime.tryParse(dateKey) ??
+            DateTime.tryParse('${dateKey}T00:00:00.000Z');
+        if (date == null) continue;
+
+        final payload = CustomHoliday(
+          date: date.toLocal(),
+          title: title,
+          color: "#FF0000",
+          updatedAt: DateTime.now(),
+          deleted: false,
+        ).toJson();
+
+        await target.put(date.toIso8601String(), payload);
+      }
+    }
+  }
+
+  Box<Map> get _ensureBox {
     if (_box == null) {
       throw Exception("❌ Hive box is not initialized. Call init() first.");
     }
@@ -77,11 +138,13 @@ class HolidayService {
 
   // ─────────────────────────────────────────────
   // ✅ 모든 사용자 정의 휴일 불러오기
-  Future<List<CustomHoliday>> loadCustomHolidays() async {
+  Future<List<CustomHoliday>> loadCustomHolidays({bool includeDeleted = false}) async {
     final box = _ensureBox;
     final holidays = <CustomHoliday>[];
     for (final e in box.values) {
-      holidays.add(CustomHoliday.fromJson(Map<String, dynamic>.from(e)));
+      final h = CustomHoliday.fromJson(Map<String, dynamic>.from(e));
+      if (!includeDeleted && h.deleted) continue;
+      holidays.add(h);
     }
     return holidays;
   }
@@ -112,6 +175,7 @@ class HolidayService {
       deleted: false,
     );
     await box.put(holiday.date.toIso8601String(), payload.toJson());
+    LocalChangeNotifier.notify('holidays');
   }
 
   // ─────────────────────────────────────────────
@@ -131,7 +195,16 @@ class HolidayService {
     );
 
     if (targetKey != null) {
-      await box.delete(targetKey);
+      final value = box.get(targetKey);
+      if (value is Map) {
+        final data = Map<String, dynamic>.from(value);
+        data['deleted'] = true;
+        data['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+        await box.put(targetKey, data);
+      } else {
+        await box.delete(targetKey);
+      }
+      LocalChangeNotifier.notify('holidays');
     }
   }
 
@@ -153,7 +226,17 @@ class HolidayService {
   // ✅ 모든 사용자 휴일 삭제
   Future<void> clearCustomHolidays() async {
     final box = _ensureBox;
-    await box.clear();
+    final now = DateTime.now().toUtc().toIso8601String();
+    for (final key in box.keys) {
+      final value = box.get(key);
+      if (value is Map) {
+        final data = Map<String, dynamic>.from(value);
+        data['deleted'] = true;
+        data['updatedAt'] = now;
+        await box.put(key, data);
+      }
+    }
+    LocalChangeNotifier.notify('holidays');
     debugPrint('모든 사용자 지정 휴일이 삭제되었습니다.');
   }
 
@@ -184,7 +267,9 @@ class HolidayService {
 
       if (_isSameDay(savedDate, date)) {
         data['title'] = newTitle;
+        data['updatedAt'] = DateTime.now().toUtc().toIso8601String();
         await box.put(key, data);
+        LocalChangeNotifier.notify('holidays');
         debugPrint("✏️ ${date.toIso8601String()} 이름 수정됨 → $newTitle");
         return;
       }

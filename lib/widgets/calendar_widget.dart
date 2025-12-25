@@ -2,6 +2,7 @@
 
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'dart:async';
+import 'dart:io' if (dart.library.html) '../platform_stub.dart' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/gestures.dart';
@@ -16,7 +17,9 @@ import '../services/holiday_service.dart';
 import '../services/calendar_data_service.dart';
 import '../services/recurring_service.dart';
 import '../services/memo_store.dart';
+import '../services/local_change_notifier.dart';
 import '../widgets/memo_side_sheet.dart';
+import '../theme/custom_colors.dart';
 
 // ─────────────────────────────────────────────
 // 📅 CalendarWidget
@@ -72,6 +75,7 @@ class _CalendarWidgetState extends State<CalendarWidget> {
   bool _isDialogOpen = false;
   DateTime? _selectedDay;
   int _calendarVersion = 0; // TableCalendar 강제 리빌드용
+  StreamSubscription<String>? _localSub;
 
   // 📝 사이드 메모 시트 상태
   bool _isMemoSheetOpen = false;
@@ -93,10 +97,32 @@ class _CalendarWidgetState extends State<CalendarWidget> {
     super.initState();
     _selectedDay = widget.selectedDay ?? DateTime.now();
     _bootstrap();
+    _localSub ??= LocalChangeNotifier.stream.listen((area) async {
+      if (!mounted) return;
+      switch (area) {
+        case 'holidays':
+          await _loadCustomHolidays();
+          break;
+        case 'recurring':
+          await _recurringService.init();
+          await _loadRecurringEvents();
+          break;
+        case 'memos':
+          await _loadMemos();
+          break;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _localSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _bootstrap() async {
     await holidayService.init();
+    await _recurringService.init();
     await _loadMemos();
     await _loadHolidays();
     await _loadCustomHolidays();
@@ -121,6 +147,7 @@ class _CalendarWidgetState extends State<CalendarWidget> {
   Future<void> _loadMemos() async {
     final decoded = await _memoStore.loadByDate();
 
+    if (!mounted) return;
     setState(() {
       _memos = decoded;
     });
@@ -320,9 +347,12 @@ class _CalendarWidgetState extends State<CalendarWidget> {
     if (list == null) return;
 
     setState(() {
-      list.removeWhere((m) => m.id == memoId);
-      if (list.isEmpty) {
-        _memos.remove(key);
+      final idx = list.indexWhere((m) => m.id == memoId);
+      if (idx != -1) {
+        list[idx] = list[idx].copyWith(
+          deleted: true,
+          updatedAt: DateTime.now(),
+        );
       }
     });
 
@@ -331,7 +361,8 @@ class _CalendarWidgetState extends State<CalendarWidget> {
 
   List<CalendarMemo> _getMemos(DateTime day) {
     final key = _formatDateKey(day);
-    return _memos[key] ?? [];
+    final list = _memos[key] ?? const <CalendarMemo>[];
+    return list.where((m) => m.deleted != true).toList();
   }
 
   // ─────────────────────────────────────────────
@@ -357,6 +388,7 @@ class _CalendarWidgetState extends State<CalendarWidget> {
     final merged =
         _calendarDataService.mergeHolidays(_icsHolidays, _customHolidays);
 
+    if (!mounted) return;
     setState(() {
       _holidays = merged;
       _calendarVersion++;
@@ -370,6 +402,7 @@ class _CalendarWidgetState extends State<CalendarWidget> {
     await holidayService.init();
 
     final holidays = await holidayService.loadCustomHolidays();
+    if (!mounted) return;
     setState(() {
       _customHolidays = holidays;
       if (rebuild) {
@@ -387,22 +420,40 @@ class _CalendarWidgetState extends State<CalendarWidget> {
   void _rebuildHolidayMap() {
     final merged =
         _calendarDataService.mergeHolidays(_icsHolidays, _customHolidays);
+    if (!mounted) return;
     setState(() => _holidays = merged);
   }
 
   Future<void> _loadRecurringEvents() async {
+    if (!mounted) return;
     setState(() => _recurrings = _recurringService.getEvents());
   }
 
   // ─────────────────────────────────────────────
   // 반복 일정 헬퍼
   // ─────────────────────────────────────────────
-  List<String> _recurringTitlesFor(DateTime day) {
-    final List<String> hits = [];
+  List<RecurringEvent> _recurringEventsFor(DateTime day) {
+    final List<RecurringEvent> hits = [];
     for (final e in _recurrings) {
-      if (_matchesRecurring(day, e)) hits.add(e.title);
+      if (_matchesRecurring(day, e)) hits.add(e);
     }
+    hits.sort((a, b) => a.title.compareTo(b.title));
     return hits;
+  }
+
+  Color _recurringTextColorFor(RecurringEvent e) {
+    final rule = (e.rule ?? '').toUpperCase();
+    final isWeekly =
+        e.cycleType == RecurringCycleType.weekly || rule.contains('FREQ=WEEKLY');
+    final isMonthly = e.cycleType == RecurringCycleType.monthly ||
+        rule.contains('FREQ=MONTHLY');
+    final isYearly = e.cycleType == RecurringCycleType.yearly ||
+        rule.contains('FREQ=YEARLY');
+
+    if (isWeekly) return const Color(0xFF4FC3F7); // sky blue
+    if (isMonthly) return const Color(0xFF1E88E5); // blue
+    if (isYearly) return const Color(0xFF9575CD); // soft purple
+    return const Color(0xFF2E7D32); // fallback
   }
 
   bool _matchesRecurring(DateTime day, RecurringEvent e) {
@@ -549,6 +600,10 @@ class _CalendarWidgetState extends State<CalendarWidget> {
         if (m != null) {
           selectedDays = m.group(1)!.split(',').toSet();
         }
+      } else if (frequency == 'YEARLY') {
+        selectedMonth = event.yearMonth ?? event.startDate.month;
+        selectedDay = event.yearDay ?? event.startDate.day;
+        isLunar = event.isLunar;
       }
     }
 
@@ -621,10 +676,14 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                             visualDensity: VisualDensity.compact,
                             label: Text(label),
                             selected: selected,
-                            selectedColor: Colors.indigoAccent,
+                            selectedColor: Theme.of(context)
+                                .colorScheme
+                                .secondary,
                             labelStyle: TextStyle(
                               color: selected
-                                  ? Colors.white
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .onSecondary
                                   : (isDark
                                       ? Colors.white70
                                       : Colors.black87),
@@ -681,13 +740,20 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                           calendarStyle: CalendarStyle(
                             outsideDaysVisible: false,
                             selectedDecoration:
-                                const BoxDecoration(
-                              color: Color(0xFF6495ED),
+                                BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .secondary,
                               shape: BoxShape.circle,
                             ),
                             todayDecoration:
-                                const BoxDecoration(
-                              color: Color(0xFFB4C7E7),
+                                BoxDecoration(
+                              color: Theme.of(context)
+                                      .extension<CustomColors>()
+                                      ?.calendarTodayFill ??
+                                  Theme.of(context)
+                                      .colorScheme
+                                      .primaryContainer,
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -802,13 +868,13 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                   ValueListenableBuilder(
                     valueListenable:
                         Hive.box<RecurringEvent>(
-                                'recurring_events')
+                                RecurringService.boxName)
                             .listenable(),
                     builder: (context,
                         Box<RecurringEvent> box, _) {
                       final events = box.values
-                          .toList()
-                          .cast<RecurringEvent>();
+                          .where((e) => e.deleted != true)
+                          .toList();
 
                       if (events.isEmpty) {
                         return const Text(
@@ -960,17 +1026,12 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                                           ],
                                         ),
                                       );
-                                      if (confirm ==
-                                          true) {
-                                        final box = Hive
-                                            .box<
-                                                RecurringEvent>(
-                                                'recurring_events');
-                                        await box
-                                            .deleteAt(
-                                                index);
-                                        await _loadRecurringEvents();
-                                        setState(() =>
+                                        if (confirm ==
+                                            true) {
+                                          await _recurringService
+                                              .removeEventByEvent(e);
+                                          await _loadRecurringEvents();
+                                          setState(() =>
                                             _calendarVersion++);
                                       }
                                     },
@@ -1080,6 +1141,7 @@ class _CalendarWidgetState extends State<CalendarWidget> {
 
                       await service
                           .addEventWithInfo(
+                        id: event?.id,
                         title: title,
                         cycleType:
                             selectedCycleType,
@@ -1113,7 +1175,9 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                                         .yearly
                                 ? isLunar
                                 : false,
-                        color: Colors.indigo,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .secondary,
                         byDays: selectedCycleType ==
                                 RecurringCycleType
                                     .weekly
@@ -1396,22 +1460,23 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                                 false,
                             titleCentered: true,
                           ),
-                          calendarStyle:
-                              CalendarStyle(
-                            todayDecoration:
-                                BoxDecoration(
-                              color: Colors
-                                  .blue.shade200,
+                          calendarStyle: CalendarStyle(
+                            todayDecoration: BoxDecoration(
+                              color: Theme.of(context)
+                                      .extension<CustomColors>()
+                                      ?.calendarTodayFill ??
+                                  Theme.of(context)
+                                      .colorScheme
+                                      .primaryContainer,
                               shape: BoxShape.circle,
                             ),
-                            selectedDecoration:
-                                BoxDecoration(
-                              color: Colors
-                                  .blue.shade400,
+                            selectedDecoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .secondary,
                               shape: BoxShape.circle,
                             ),
-                            outsideDaysVisible:
-                                false,
+                            outsideDaysVisible: false,
                           ),
                         ),
                       ),
@@ -1757,6 +1822,9 @@ class _CalendarWidgetState extends State<CalendarWidget> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final daysOfWeekHeight = widget.compact ? 32.0 : 50.0;
+    final desiredRowHeight =
+        (widget.rowHeight ?? (widget.compact ? 80 : 160)).toDouble();
 
     return Stack(
       children: [
@@ -1764,7 +1832,13 @@ class _CalendarWidgetState extends State<CalendarWidget> {
           children: [
             _buildHeader(colorScheme),
             Expanded(
-              child: TableCalendar(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final maxH = constraints.maxHeight;
+                  final desiredTableHeight =
+                      desiredRowHeight * 6.0 + daysOfWeekHeight;
+
+                  final calendar = TableCalendar(
                 key: ValueKey(_calendarVersion),
                 headerVisible: false,
                 firstDay: DateTime.utc(2000, 1, 1),
@@ -1782,7 +1856,8 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                   HapticFeedback.lightImpact();
 
                   widget.onDaySelected(selectedDay, focusedDay);
-                  final shouldOpenMemo = widget.openMemoOnDayTap;
+                  final shouldOpenMemo = widget.openMemoOnDayTap &&
+                      (Platform.isAndroid || Platform.isIOS);
 
                   setState(() {
                     _selectedDay = selectedDay;
@@ -1799,10 +1874,8 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                     _showMemoBottomSheet(selectedDay);
                   }
                 },
-                rowHeight: widget.rowHeight ??
-                    (widget.compact ? 80 : 160),
-                daysOfWeekHeight:
-                    widget.compact ? 32 : 50,
+                rowHeight: desiredRowHeight,
+                daysOfWeekHeight: daysOfWeekHeight,
                 availableGestures:
                     AvailableGestures.horizontalSwipe,
                 onPageChanged: (fd) {
@@ -1814,8 +1887,9 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                 sixWeekMonthsEnforced: true,
                 calendarStyle: CalendarStyle(
                   tableBorder: TableBorder.all(
-                    color:
-                        const Color(0xFFD0E5FF),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .outlineVariant,
                     width: 0.5,
                   ),
                 ),
@@ -1853,6 +1927,14 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                         isSelected: true,
                       ),
                 ),
+                  );
+
+                  if (desiredTableHeight <= maxH) return calendar;
+                  return SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: calendar,
+                  );
+                },
               ),
             ),
           ],
@@ -1921,10 +2003,31 @@ class _CalendarWidgetState extends State<CalendarWidget> {
       final key = _formatDateKey(day);
       final holiday = _holidays[key];
       final memos = _getMemos(day);
+      final recurringEvents = _recurringEventsFor(day);
       final colorScheme = Theme.of(context).colorScheme;
+      final custom = Theme.of(context).extension<CustomColors>();
       final isSunday = day.weekday == DateTime.sunday;
       final isSaturday = day.weekday == DateTime.saturday;
       final selected = isSameDay(day, _selectedDay);
+
+      // Keep compact cells from overflowing when holiday/recurring/memos stack up.
+      final showHoliday = holiday != null;
+      final showRecurring = recurringEvents.isNotEmpty;
+      const maxInfoLines = 3; // below the day number row
+      var remainingInfoLines = maxInfoLines - (showHoliday ? 1 : 0);
+      if (remainingInfoLines < 0) remainingInfoLines = 0;
+      final recurringLimit = showRecurring
+          ? (recurringEvents.length > remainingInfoLines
+              ? remainingInfoLines
+              : recurringEvents.length)
+          : 0;
+
+      var memoLimit = remainingInfoLines - recurringLimit;
+      if (memoLimit < 0) memoLimit = 0;
+      final hasMoreMemos = memos.length > memoLimit;
+      final safeMemoLimit = memoLimit > memos.length ? memos.length : memoLimit;
+      final lastShownMemo =
+          safeMemoLimit > 0 ? memos[safeMemoLimit - 1] : null;
 
       Color textColor;
       if (isOutside) {
@@ -1941,9 +2044,11 @@ class _CalendarWidgetState extends State<CalendarWidget> {
 
       Color bgColor = Colors.transparent;
       if (selected) {
-        bgColor = colorScheme.primaryContainer.withOpacity(0.35);
+        bgColor = custom?.calendarSelectedFill ??
+            colorScheme.primaryContainer.withOpacity(0.35);
       } else if (isToday || isSameDay(day, DateTime.now())) {
-        bgColor = colorScheme.primary.withOpacity(0.12);
+        bgColor = custom?.calendarTodayFill ??
+            colorScheme.primary.withOpacity(0.12);
       } else if (holiday != null || isSunday) {
         bgColor = Colors.redAccent.withOpacity(0.06);
       } else if (isSaturday) {
@@ -1954,7 +2059,7 @@ class _CalendarWidgetState extends State<CalendarWidget> {
         decoration: BoxDecoration(
           color: bgColor,
           border: Border.all(
-            color: Colors.grey.shade300,
+            color: colorScheme.outlineVariant,
             width: 0.4,
           ),
         ),
@@ -1974,11 +2079,22 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                 ),
                 if (memos.isNotEmpty) ...[
                   const SizedBox(width: 4),
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: colorScheme.tertiary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                ],
+                if (recurringEvents.isNotEmpty) ...[
+                  const SizedBox(width: 4),
                   Container(
                     width: 6,
                     height: 6,
                     decoration: BoxDecoration(
-                      color: Colors.orangeAccent,
+                      color: colorScheme.secondary,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -1998,11 +2114,28 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                     : Colors.red,
                 ),
               ),
-            ...memos.take(3).map((m) {
+            ...recurringEvents.take(recurringLimit).map(
+              (e) => Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  e.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w600,
+                    color: _recurringTextColorFor(e),
+                  ),
+                ),
+              ),
+            ),
+            ...memos.take(memoLimit).map((m) {
               final txt = m.text;
               if (txt.isEmpty) return const SizedBox.shrink();
-              final preview =
-                  txt.length > 4 ? "${txt.substring(0, 4)}…" : txt;
+              var preview = txt.length > 4 ? "${txt.substring(0, 4)}..." : txt;
+              if (hasMoreMemos && lastShownMemo != null && m == lastShownMemo) {
+                preview = "$preview...";
+              }
               final c = _parseColor(m.color, colorScheme.primary);
               return Padding(
                 padding: const EdgeInsets.only(top: 2),
@@ -2017,17 +2150,6 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                 ),
               );
             }),
-            if (memos.length > 3)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  "...",
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
           ],
         ),
       );
@@ -2035,8 +2157,9 @@ class _CalendarWidgetState extends State<CalendarWidget> {
 
     final key = _formatDateKey(day);
     final holiday = _holidays[key];
-    final recurringTitles = _recurringTitlesFor(day);
+    final recurringEvents = _recurringEventsFor(day);
     final colorScheme = Theme.of(context).colorScheme;
+    final custom = Theme.of(context).extension<CustomColors>();
 
     final isSunday = day.weekday == DateTime.sunday;
     final isSaturday = day.weekday == DateTime.saturday;
@@ -2068,11 +2191,12 @@ class _CalendarWidgetState extends State<CalendarWidget> {
               .withOpacity(0.3);
     } else if (isSelected ||
         isSameDay(day, _selectedDay)) {
-      bgColor =
+      bgColor = custom?.calendarSelectedFill ??
           colorScheme.primaryContainer.withOpacity(0.7);
     } else if (isToday ||
         isSameDay(day, DateTime.now())) {
-      bgColor = colorScheme.primary.withOpacity(0.12);
+      bgColor = custom?.calendarTodayFill ??
+          colorScheme.primary.withOpacity(0.12);
     } else if (holiday != null || isSunday) {
       bgColor = Colors.redAccent.withOpacity(0.08);
     } else if (isSaturday) {
@@ -2082,7 +2206,7 @@ class _CalendarWidgetState extends State<CalendarWidget> {
     Widget inner = Container(
       decoration: BoxDecoration(
         border: Border.all(
-          color: Colors.grey.shade400,
+          color: colorScheme.outlineVariant,
           width: 0.5,
         ),
         color: bgColor,
@@ -2128,16 +2252,23 @@ class _CalendarWidgetState extends State<CalendarWidget> {
                   ),
                 ),
 
-              if (recurringTitles.isNotEmpty)
+              if (recurringEvents.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    recurringTitles.join("\n"),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Colors.green,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: recurringEvents.map((e) {
+                      return Text(
+                        e.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: _recurringTextColorFor(e),
+                        ),
+                      );
+                    }).toList(),
                   ),
                 ),
 
@@ -2399,25 +2530,25 @@ class _CalendarWidgetState extends State<CalendarWidget> {
           Row(
             children: [
               IconButton(
-                icon: const Icon(
+                icon: Icon(
                   FeatherIcons.plus,
-                  color: Colors.indigo,
+                  color: colorScheme.primary,
                 ),
                 tooltip: "휴일 추가",
                 onPressed: _showAddCustomHolidayDialog,
               ),
               IconButton(
-                icon: const Icon(
+                icon: Icon(
                   Icons.autorenew,
-                  color: Colors.green,
+                  color: colorScheme.secondary,
                 ),
                 tooltip: "반복 일정 추가",
                 onPressed: _showRecurringDialog,
               ),
               IconButton(
-                icon: const Icon(
+                icon: Icon(
                   FeatherIcons.trash2,
-                  color: Colors.red,
+                  color: colorScheme.error,
                 ),
                 tooltip: "모든 메모 삭제",
                 onPressed: _clearAllMemos,
